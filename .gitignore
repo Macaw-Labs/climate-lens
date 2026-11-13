@@ -1,0 +1,10 @@
+node_modules/
+.next/
+out/
+.env*
+.DS_Store
+__pycache__/
+.venv/
+tsconfig.tsbuildinfo
+data/raw/*
+!data/raw/.gitkeep

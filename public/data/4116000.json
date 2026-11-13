@@ -1,0 +1,276 @@
+{
+  "schema_version": "1.0.0",
+  "metadata": {
+    "ibge_code": "4116000",
+    "name": "Miraselva",
+    "state": "PR",
+    "population": 1966,
+    "population_year": 2022,
+    "area_km2": 90.29,
+    "biome": "Mata Atlântica"
+  },
+  "emissions_summary": {
+    "total_emissions_tco2e": 31922.45,
+    "per_capita_tco2e": 16.2373,
+    "reference_year": 2025,
+    "dominant_sector": "AFOLU",
+    "tier_breakdown": {
+      "T1_LOCAL_share": 0.0,
+      "T2_MODELED_share": 0.9747,
+      "T3_PROXY_share": 0.0253
+    }
+  },
+  "sectors": {
+    "STATIONARY_ENERGY": {
+      "sector_code": "STATIONARY_ENERGY",
+      "sector_name": "Stationary Energy",
+      "emissions_tco2e": 0.0,
+      "confidence_tier": "T3_PROXY",
+      "data_source": "SEEG Municípios Coleção 14.0 (GWP-AR5, 2025) (Stationary Energy)",
+      "reference_year": 2025,
+      "methodology_note": "Aggregated from 2 GPC subsectors in SEEG Coleção 14.0 (GWP-AR5).",
+      "gap_note": "Grid Electricity Consumption (Scope 2): Obtain annual municipal electricity consumption (MWh) by tariff class for Miraselva from Copel Distribuição / ANEEL SINDAT and apply Brazil SIN grid factor via Local Override to upgrade to T1_LOCAL. | Stationary Fuel Combustion (Residential, Commercial, Industrial & Public): Obtain ANP municipal LPG (GLP) sales and local industrial boiler fuel logs in Miraselva to replace state-disaggregated proxy and upgrade to T1_LOCAL.",
+      "subsectors": [
+        {
+          "subsector_key": "grid_electricity",
+          "subsector_name": "Grid Electricity Consumption (Scope 2)",
+          "emissions_tco2e": 0.0,
+          "confidence_tier": "T3_PROXY",
+          "data_source": "SEEG Municípios Coleção 14.0 (GWP-AR5, 2025) — Scope 2 electricity not disaggregated in SEEG Municípios",
+          "reference_year": 2025,
+          "methodology_note": "SEEG Municípios allocates power-plant Scope 1 emissions at generation sites rather than municipal end-use Scope 2 electricity. Baseline is 0.0 tCO2e until local MWh consumption is supplied.",
+          "gap_note": "Obtain annual municipal electricity consumption (MWh) by tariff class for Miraselva from Copel Distribuição / ANEEL SINDAT and apply Brazil SIN grid factor via Local Override to upgrade to T1_LOCAL."
+        },
+        {
+          "subsector_key": "stationary_fuel_combustion",
+          "subsector_name": "Stationary Fuel Combustion (Residential, Commercial, Industrial & Public)",
+          "emissions_tco2e": 0.0,
+          "confidence_tier": "T3_PROXY",
+          "data_source": "SEEG Municípios Coleção 14.0 (GWP-AR5, 2025) — Energia (Residencial, Comercial, Público, Agropecuária, Industrial)",
+          "reference_year": 2025,
+          "methodology_note": "State-level ANP/EPE fuel balances (GLP, diesel, fuel oil) disaggregated to municipalities via IBGE population and industrial/commercial value-added proxies.",
+          "gap_note": "Obtain ANP municipal LPG (GLP) sales and local industrial boiler fuel logs in Miraselva to replace state-disaggregated proxy and upgrade to T1_LOCAL."
+        }
+      ]
+    },
+    "TRANSPORTATION": {
+      "sector_code": "TRANSPORTATION",
+      "sector_name": "Transportation",
+      "emissions_tco2e": 67.21,
+      "confidence_tier": "T3_PROXY",
+      "data_source": "SEEG Municípios Coleção 14.0 (GWP-AR5, 2025) (Transportation)",
+      "reference_year": 2025,
+      "methodology_note": "Aggregated from 2 GPC subsectors in SEEG Coleção 14.0 (GWP-AR5).",
+      "gap_note": "On-Road Transportation (Urban Fleet, Freight & Public Transit): Obtain audited ANP SIMP municipal retail fuel sales (diesel, gasoline, ethanol liters) and Miraselva public transit fleet fuel logs to upgrade to T1_LOCAL. | Aviation, Rail & Off-Road Transportation: Obtain local airport QAV fuel uplift records (if applicable) and municipal off-road machinery diesel logs for Miraselva to upgrade to T1_LOCAL.",
+      "subsectors": [
+        {
+          "subsector_key": "on_road_transportation",
+          "subsector_name": "On-Road Transportation (Urban Fleet, Freight & Public Transit)",
+          "emissions_tco2e": 36.02,
+          "confidence_tier": "T3_PROXY",
+          "data_source": "SEEG Municípios Coleção 14.0 (GWP-AR5, 2025) — Energia / Transportes / Rodoviário",
+          "reference_year": 2025,
+          "methodology_note": "State/regional ANP fuel distribution (Diesel B14, Gasoline C, Hydrated Ethanol) allocated to municipalities using SENATRAN fleet shares and highway VKT modeling.",
+          "gap_note": "Obtain audited ANP SIMP municipal retail fuel sales (diesel, gasoline, ethanol liters) and Miraselva public transit fleet fuel logs to upgrade to T1_LOCAL."
+        },
+        {
+          "subsector_key": "off_road_and_aviation",
+          "subsector_name": "Aviation, Rail & Off-Road Transportation",
+          "emissions_tco2e": 31.19,
+          "confidence_tier": "T3_PROXY",
+          "data_source": "SEEG Municípios Coleção 14.0 (GWP-AR5, 2025) — Energia / Transportes (Aéreo, Ferroviário, Hidroviário)",
+          "reference_year": 2025,
+          "methodology_note": "Regional aviation kerosene (QAV), aviation gasoline, and rail/waterway diesel allocated by ANAC airport LTO cycles and transport network proxies.",
+          "gap_note": "Obtain local airport QAV fuel uplift records (if applicable) and municipal off-road machinery diesel logs for Miraselva to upgrade to T1_LOCAL."
+        }
+      ]
+    },
+    "WASTE": {
+      "sector_code": "WASTE",
+      "sector_name": "Waste (Solid Waste & Effluents)",
+      "emissions_tco2e": 741.6,
+      "confidence_tier": "T3_PROXY",
+      "data_source": "SEEG Municípios Coleção 14.0 (GWP-AR5, 2025) (Waste (Solid Waste & Effluents))",
+      "reference_year": 2025,
+      "methodology_note": "Aggregated from 2 GPC subsectors in SEEG Coleção 14.0 (GWP-AR5).",
+      "gap_note": "Municipal Solid Waste Disposal & Incineration: Obtain certified municipal landfill weighbridge tonnage (t/year) and active methane capture/flaring logs for Miraselva to upgrade to T1_LOCAL. | Domestic & Industrial Wastewater Treatment: Obtain Sanepar / municipal ETE plant-level BOD inflow/outflow and biogas flaring logs for Miraselva to upgrade to T1_LOCAL.",
+      "subsectors": [
+        {
+          "subsector_key": "solid_waste_disposal",
+          "subsector_name": "Municipal Solid Waste Disposal & Incineration",
+          "emissions_tco2e": 418.6,
+          "confidence_tier": "T3_PROXY",
+          "data_source": "SEEG Municípios Coleção 14.0 (GWP-AR5, 2025) — Resíduos (Disposição final, Incineração, Tratamento biológico)",
+          "reference_year": 2025,
+          "methodology_note": "IPCC First-Order Decay (FOD) model driven by SNIS / IBGE per-capita waste generation and regional landfill/dumpsite shares.",
+          "gap_note": "Obtain certified municipal landfill weighbridge tonnage (t/year) and active methane capture/flaring logs for Miraselva to upgrade to T1_LOCAL."
+        },
+        {
+          "subsector_key": "wastewater_treatment",
+          "subsector_name": "Domestic & Industrial Wastewater Treatment",
+          "emissions_tco2e": 323.0,
+          "confidence_tier": "T3_PROXY",
+          "data_source": "SEEG Municípios Coleção 14.0 (GWP-AR5, 2025) — Resíduos (Efluentes domésticos e industriais)",
+          "reference_year": 2025,
+          "methodology_note": "Estimated from municipal population, SNIS sewage coverage rates, and industrial BOD proxies using IPCC CH4/N2O effluent emission factors.",
+          "gap_note": "Obtain Sanepar / municipal ETE plant-level BOD inflow/outflow and biogas flaring logs for Miraselva to upgrade to T1_LOCAL."
+        }
+      ]
+    },
+    "IPPU": {
+      "sector_code": "IPPU",
+      "sector_name": "Industrial Processes and Product Use",
+      "emissions_tco2e": 0.0,
+      "confidence_tier": "T3_PROXY",
+      "data_source": "SEEG Municípios Coleção 14.0 (GWP-AR5, 2025) (Industrial Processes and Product Use)",
+      "reference_year": 2025,
+      "methodology_note": "Point-source cement/lime/metallurgy allocation and national HFC/solvent proxies downscaled by municipal industrial registry.",
+      "gap_note": "Industrial Processes & Product Use (IPPU): Obtain municipal environmental licensing (IAT / Secretaria de Meio Ambiente) industrial process inventory and commercial HFC refrigerant audit for Miraselva to upgrade to T1_LOCAL.",
+      "subsectors": [
+        {
+          "subsector_key": "industrial_processes",
+          "subsector_name": "Industrial Processes & Product Use (IPPU)",
+          "emissions_tco2e": 0.0,
+          "confidence_tier": "T3_PROXY",
+          "data_source": "SEEG Municípios Coleção 14.0 (GWP-AR5, 2025) — Processos Industriais",
+          "reference_year": 2025,
+          "methodology_note": "Point-source cement/lime/metallurgy allocation and national HFC/solvent proxies downscaled by municipal industrial registry.",
+          "gap_note": "Obtain municipal environmental licensing (IAT / Secretaria de Meio Ambiente) industrial process inventory and commercial HFC refrigerant audit for Miraselva to upgrade to T1_LOCAL."
+        }
+      ]
+    },
+    "AFOLU": {
+      "sector_code": "AFOLU",
+      "sector_name": "Agriculture, Forestry and Other Land Use",
+      "emissions_tco2e": 31113.64,
+      "confidence_tier": "T2_MODELED",
+      "data_source": "SEEG Municípios Coleção 14.0 (GWP-AR5, 2025) (Agriculture, Forestry and Other Land Use)",
+      "reference_year": 2025,
+      "methodology_note": "Aggregated from 2 GPC subsectors in SEEG Coleção 14.0 (GWP-AR5).",
+      "gap_note": "Agriculture, Livestock & Managed Soils: Verify local agricultural cooperative fertilizer sales and manure management practices within Miraselva to upgrade to T1_LOCAL. | Land-Use Change & Forestry (Net Emissions/Removals): Integrate municipal CAR (Cadastro Ambiental Rural) field-verified forest biomass and urban arborization carbon inventory for Miraselva to upgrade to T1_LOCAL.",
+      "subsectors": [
+        {
+          "subsector_key": "agriculture_and_livestock",
+          "subsector_name": "Agriculture, Livestock & Managed Soils",
+          "emissions_tco2e": 29852.22,
+          "confidence_tier": "T2_MODELED",
+          "data_source": "SEEG Municípios Coleção 14.0 (GWP-AR5, 2025) — Agropecuária (IBGE PPM/PAM Municipal Modeling)",
+          "reference_year": 2025,
+          "methodology_note": "Spatially/census-modeled from IBGE Pesquisa da Pecuária Municipal (PPM) herd counts, PAM crop areas, and Tier 2 IPCC enteric fermentation & soil N2O factors.",
+          "gap_note": "Verify local agricultural cooperative fertilizer sales and manure management practices within Miraselva to upgrade to T1_LOCAL."
+        },
+        {
+          "subsector_key": "land_use_and_forestry",
+          "subsector_name": "Land-Use Change & Forestry (Net Emissions/Removals)",
+          "emissions_tco2e": 1261.42,
+          "confidence_tier": "T2_MODELED",
+          "data_source": "SEEG Municípios Coleção 14.0 (GWP-AR5, 2025) — Mudança de Uso da Terra e Floresta (MapBiomas Spatial Modeling)",
+          "reference_year": 2025,
+          "methodology_note": "Spatially modeled at 30m resolution from MapBiomas annual land-cover transition matrices (gross deforestation/soil carbon emissions net of secondary forest & protected-area removals).",
+          "gap_note": "Integrate municipal CAR (Cadastro Ambiental Rural) field-verified forest biomass and urban arborization carbon inventory for Miraselva to upgrade to T1_LOCAL."
+        }
+      ]
+    }
+  },
+  "climate_risks": [
+    {
+      "sector_code": "GEO_HYDROLOGICAL_DISASTERS",
+      "sector_name": "Geo-hydrological Disasters",
+      "indicator_name": "Inundações, enxurradas e alagamentos (Baixo)",
+      "hazard_description": "AdaptaBrasil MCTI municipal climate risk index for inundações, enxurradas e alagamentos in Miraselva (classification: Baixo, 0.37/1.00).",
+      "risk_index": 0.37,
+      "risk_class": "LOW",
+      "reference_scenario": "HISTORICAL_BASELINE",
+      "reference_year": 2015,
+      "confidence_tier": "T2_MODELED",
+      "data_source": "AdaptaBrasil MCTI API (Indicator #60041, 2015)",
+      "methodology_note": "Composite IPCC climate risk index combining climate hazard, exposure, and socio-environmental vulnerability modeled at municipal scale by MCTI/INPE.",
+      "gap_note": "Integrate municipal Defesa Civil georeferenced flood/landslide occurrence logs and municipal stormwater drainage master plan (Plano Diretor de Drenagem) to upgrade to T1_LOCAL."
+    },
+    {
+      "sector_code": "GEO_HYDROLOGICAL_DISASTERS",
+      "sector_name": "Geo-hydrological Disasters",
+      "indicator_name": "Deslizamento de terra (Baixo)",
+      "hazard_description": "AdaptaBrasil MCTI municipal climate risk index for deslizamento de terra in Miraselva (classification: Baixo, 0.25/1.00).",
+      "risk_index": 0.25,
+      "risk_class": "LOW",
+      "reference_scenario": "HISTORICAL_BASELINE",
+      "reference_year": 2015,
+      "confidence_tier": "T2_MODELED",
+      "data_source": "AdaptaBrasil MCTI API (Indicator #60001, 2015)",
+      "methodology_note": "Composite IPCC climate risk index combining climate hazard, exposure, and socio-environmental vulnerability modeled at municipal scale by MCTI/INPE.",
+      "gap_note": "Integrate municipal Defesa Civil georeferenced flood/landslide occurrence logs and municipal stormwater drainage master plan (Plano Diretor de Drenagem) to upgrade to T1_LOCAL."
+    },
+    {
+      "sector_code": "WATER_RESOURCES",
+      "sector_name": "Water Resources",
+      "indicator_name": "Risco de estresse hídrico (Médio)",
+      "hazard_description": "AdaptaBrasil MCTI municipal climate risk index for risco de estresse hídrico in Miraselva (classification: Médio, 0.46/1.00).",
+      "risk_index": 0.46,
+      "risk_class": "MEDIUM",
+      "reference_scenario": "HISTORICAL_BASELINE",
+      "reference_year": 2020,
+      "confidence_tier": "T2_MODELED",
+      "data_source": "AdaptaBrasil MCTI API (Indicator #2, 2020)",
+      "methodology_note": "Composite IPCC climate risk index combining climate hazard, exposure, and socio-environmental vulnerability modeled at municipal scale by MCTI/INPE.",
+      "gap_note": "Integrate local water utility (Sanepar / municipal SAAE) watershed intake flow gauges and drought contingency storage capacity records to upgrade to T1_LOCAL."
+    },
+    {
+      "sector_code": "HEALTH",
+      "sector_name": "Health",
+      "indicator_name": "Arboviroses dengue, zika e chikungunya (Alto)",
+      "hazard_description": "AdaptaBrasil MCTI municipal climate risk index for arboviroses dengue, zika e chikungunya in Miraselva (classification: Alto, 0.63/1.00).",
+      "risk_index": 0.63,
+      "risk_class": "HIGH",
+      "reference_scenario": "HISTORICAL_BASELINE",
+      "reference_year": 2020,
+      "confidence_tier": "T2_MODELED",
+      "data_source": "AdaptaBrasil MCTI API (Indicator #50076, 2020)",
+      "methodology_note": "Composite IPCC climate risk index combining climate hazard, exposure, and socio-environmental vulnerability modeled at municipal scale by MCTI/INPE.",
+      "gap_note": "Integrate Secretaria Municipal de Saúde neighborhood-level LIRAa vector infestation series and climate-sensitive morbidity logs to upgrade to T1_LOCAL."
+    },
+    {
+      "sector_code": "ENERGY",
+      "sector_name": "Energy",
+      "indicator_name": "Segurança energética — Disponibilidade (Baixo)",
+      "hazard_description": "AdaptaBrasil MCTI municipal climate risk index for segurança energética — disponibilidade in Miraselva (classification: Baixo, 0.38/1.00).",
+      "risk_index": 0.38,
+      "risk_class": "LOW",
+      "reference_scenario": "HISTORICAL_BASELINE",
+      "reference_year": 2019,
+      "confidence_tier": "T2_MODELED",
+      "data_source": "AdaptaBrasil MCTI API (Indicator #10024, 2019)",
+      "methodology_note": "Composite IPCC climate risk index combining climate hazard, exposure, and socio-environmental vulnerability modeled at municipal scale by MCTI/INPE.",
+      "gap_note": "Integrate electricity distributor (Copel) feeder-level weather-attributed DEC/FEC outage logs and municipal grid resilience audits to upgrade to T1_LOCAL."
+    },
+    {
+      "sector_code": "FOOD_SECURITY",
+      "sector_name": "Food Security",
+      "indicator_name": "Disponibilidade de alimentos (Muito baixo)",
+      "hazard_description": "AdaptaBrasil MCTI municipal climate risk index for disponibilidade de alimentos in Miraselva (classification: Muito baixo, 0.15/1.00).",
+      "risk_index": 0.15,
+      "risk_class": "VERY_LOW",
+      "reference_scenario": "HISTORICAL_BASELINE",
+      "reference_year": 2017,
+      "confidence_tier": "T2_MODELED",
+      "data_source": "AdaptaBrasil MCTI API (Indicator #5001, 2017)",
+      "methodology_note": "Composite IPCC climate risk index combining climate hazard, exposure, and socio-environmental vulnerability modeled at municipal scale by MCTI/INPE.",
+      "gap_note": "Integrate municipal agricultural extension (IDR-Paraná) crop loss records and local food supply/school-feeding vulnerability registries to upgrade to T1_LOCAL."
+    },
+    {
+      "sector_code": "FOOD_SECURITY",
+      "sector_name": "Food Security",
+      "indicator_name": "Acesso e consumo de alimentos (Muito baixo)",
+      "hazard_description": "AdaptaBrasil MCTI municipal climate risk index for acesso e consumo de alimentos in Miraselva (classification: Muito baixo, 0.09/1.00).",
+      "risk_index": 0.09,
+      "risk_class": "VERY_LOW",
+      "reference_scenario": "HISTORICAL_BASELINE",
+      "reference_year": 2017,
+      "confidence_tier": "T2_MODELED",
+      "data_source": "AdaptaBrasil MCTI API (Indicator #5048, 2017)",
+      "methodology_note": "Composite IPCC climate risk index combining climate hazard, exposure, and socio-environmental vulnerability modeled at municipal scale by MCTI/INPE.",
+      "gap_note": "Integrate municipal agricultural extension (IDR-Paraná) crop loss records and local food supply/school-feeding vulnerability registries to upgrade to T1_LOCAL."
+    }
+  ],
+  "last_updated": "2026-11-12T00:00:00Z"
+}
