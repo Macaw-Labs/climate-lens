@@ -1,5 +1,5 @@
 """
-Deterministic municipal climate data ingestion pipeline (`scripts/build_city_data.py`).
+Deterministic municipal climate data ingestion pipeline (`scripts/build_city_data.py`, Schema v2.0.0).
 
 Reads raw datasets in `data/raw/`:
 - `data/raw/seeg_pr.csv` (SEEG Municípios Collection 14.0, filtered to CO2e GWP-AR5)
@@ -7,8 +7,7 @@ Reads raw datasets in `data/raw/`:
 - `data/raw/ibge_pr_2022.json` (IBGE Censo 2022 population & territorial area)
 
 Produces validated per-city JSON records at `public/data/{ibge_code}.json` and
-updates `public/data/index.json` conforming strictly to `data/schema/city_schema.py`
-and `AGENTS.md`.
+updates `public/data/index.json` conforming strictly to `data/schema/city_schema.py` (v2.0.0).
 """
 
 from __future__ import annotations
@@ -26,14 +25,18 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from data.schema.city_schema import validate_city_climate_record  # noqa: E402
+from data.schema.city_schema import (  # noqa: E402
+    CURRENT_SCHEMA_VERSION,
+    GPC_SECTOR_CODES,
+    validate_city_climate_record,
+)
 
 DEFAULT_SEEG_CSV = Path("data/raw/seeg_pr.csv")
 DEFAULT_ADAPTABRASIL_JSON = Path("data/raw/adaptabrasil_pr.json")
 DEFAULT_IBGE_JSON = Path("data/raw/ibge_pr_2022.json")
 DEFAULT_OUT_DIR = Path("public/data")
 DEFAULT_REFERENCE_YEAR = 2025
-DEFAULT_GENERATED_AT = "2026-11-12T00:00:00Z"
+DEFAULT_GENERATED_AT = "2026-11-13T00:00:00Z"
 
 RANGELABEL_TO_RISK_CLASS: Dict[str, str] = {
     "Muito baixo": "VERY_LOW",
@@ -46,23 +49,23 @@ RANGELABEL_TO_RISK_CLASS: Dict[str, str] = {
 RISK_GAP_NOTES: Dict[str, str] = {
     "GEO_HYDROLOGICAL_DISASTERS": (
         "Integrate municipal Defesa Civil georeferenced flood/landslide occurrence logs "
-        "and municipal stormwater drainage master plan (Plano Diretor de Drenagem) to upgrade to T1_LOCAL."
+        "and municipal stormwater drainage master plan (Plano Diretor de Drenagem) to provide local evidence."
     ),
     "WATER_RESOURCES": (
         "Integrate local water utility (Sanepar / municipal SAAE) watershed intake flow gauges "
-        "and drought contingency storage capacity records to upgrade to T1_LOCAL."
+        "and drought contingency storage capacity records to provide local evidence."
     ),
     "HEALTH": (
         "Integrate Secretaria Municipal de Saúde neighborhood-level LIRAa vector infestation "
-        "series and climate-sensitive morbidity logs to upgrade to T1_LOCAL."
+        "series and climate-sensitive morbidity logs to provide local evidence."
     ),
     "ENERGY": (
         "Integrate electricity distributor (Copel) feeder-level weather-attributed DEC/FEC "
-        "outage logs and municipal grid resilience audits to upgrade to T1_LOCAL."
+        "outage logs and municipal grid resilience audits to provide local evidence."
     ),
     "FOOD_SECURITY": (
         "Integrate municipal agricultural extension (IDR-Paraná) crop loss records and "
-        "local food supply/school-feeding vulnerability registries to upgrade to T1_LOCAL."
+        "local food supply/school-feeding vulnerability registries to provide local evidence."
     ),
 }
 
@@ -76,9 +79,7 @@ def _round4(val: float) -> float:
 
 
 def classify_seeg_row(setor: str, categoria: str, subcategoria: str) -> Tuple[str, str]:
-    """
-    Deterministically map a SEEG Municípios row into (GPCSectorCode, GPCSubsectorKey).
-    """
+    """Deterministically map a SEEG Municípios row into (GPCSectorCode, GPCSubsectorKey)."""
     if setor == "Energia":
         if categoria == "Transportes":
             if subcategoria == "Rodoviário":
@@ -103,43 +104,41 @@ def classify_seeg_row(setor: str, categoria: str, subcategoria: str) -> Tuple[st
     raise ValueError(f"Unrecognized SEEG Setor de emissão: {setor!r}")
 
 
-def compute_sector_tier(subsectors: List[Dict[str, Any]]) -> str:
-    """
-    Compute aggregate sector confidence tier weighted by absolute subsector emissions.
-    """
-    if not subsectors:
-        return "T3_PROXY"
-    if all(s["confidence_tier"] == "T1_LOCAL" for s in subsectors):
-        return "T1_LOCAL"
-
-    total_abs = sum(abs(s["emissions_tco2e"]) for s in subsectors)
-    if total_abs == 0:
-        tiers = {s["confidence_tier"] for s in subsectors}
-        if "T1_LOCAL" in tiers:
-            return "T1_LOCAL"
-        if "T2_MODELED" in tiers:
-            return "T2_MODELED"
-        return "T3_PROXY"
-
-    t1_abs = sum(abs(s["emissions_tco2e"]) for s in subsectors if s["confidence_tier"] == "T1_LOCAL")
-    t2_abs = sum(abs(s["emissions_tco2e"]) for s in subsectors if s["confidence_tier"] == "T2_MODELED")
-
-    if t1_abs / total_abs >= 0.6:
-        return "T1_LOCAL"
-    if (t1_abs + t2_abs) / total_abs >= 0.6:
-        return "T2_MODELED"
-    return "T3_PROXY"
+def _build_provenance_label(
+    local_share: float,
+    modeled_share: float,
+    proxy_share: float,
+    missing_count: int,
+) -> Tuple[bool, str]:
+    parts: List[str] = []
+    if local_share > 0.0005:
+        parts.append(f"{local_share * 100:.1f}% Local")
+    if modeled_share > 0.0005:
+        parts.append(f"{modeled_share * 100:.1f}% Modeled")
+    if proxy_share > 0.0005:
+        parts.append(f"{proxy_share * 100:.1f}% Proxy")
+    is_mixed = len(parts) > 1
+    prefix = "Mixed: " if is_mixed else ""
+    suffix = (
+        f" — Partial coverage ({missing_count} component{'s' if missing_count > 1 else ''} unavailable)"
+        if missing_count > 0
+        else ""
+    )
+    if not parts:
+        return False, f"No available emissions{suffix}"
+    return is_mixed, f"{prefix}{' / '.join(parts)}{suffix}"
 
 
 def build_sectors_from_subsector_totals(
     sub_totals: Dict[str, float],
     reference_year: int,
     city_name: str,
+    ibge_code: str,
 ) -> Dict[str, Any]:
     """
-    Construct the 5 GPC sectors and subsectors with explicit provenance & gap notes.
+    Construct the 5 GPC sectors and subsectors with explicit availability status,
+    data origin (separate from IPCC tiers), verification status, and limitations.
     """
-    grid_elec = _round2(sub_totals.get("grid_electricity", 0.0))
     stat_fuel = _round2(sub_totals.get("stationary_fuel_combustion", 0.0))
     on_road = _round2(sub_totals.get("on_road_transportation", 0.0))
     off_road = _round2(sub_totals.get("off_road_and_aviation", 0.0))
@@ -149,39 +148,61 @@ def build_sectors_from_subsector_totals(
     agro_val = _round2(sub_totals.get("agriculture_and_livestock", 0.0))
     lulucf_val = _round2(sub_totals.get("land_use_and_forestry", 0.0))
 
-    seeg_src = f"SEEG Municípios Coleção 14.0 (GWP-AR5, {reference_year})"
+    seeg_ref = f"SEEG Municípios Coleção 14.0 (GWP-AR5, {reference_year}) — https://seeg.eco.br/dados/"
+    geo_cov = f"Municipality-wide ({city_name}, IBGE {ibge_code})"
+    period_str = str(reference_year)
 
     stationary_subs = [
         {
             "subsector_key": "grid_electricity",
             "subsector_name": "Grid Electricity Consumption (Scope 2)",
-            "emissions_tco2e": grid_elec,
-            "confidence_tier": "T3_PROXY",
-            "data_source": f"{seeg_src} — Scope 2 electricity not disaggregated in SEEG Municípios",
-            "reference_year": reference_year,
-            "methodology_note": (
-                "SEEG Municípios allocates power-plant Scope 1 emissions at generation sites rather than "
-                "municipal end-use Scope 2 electricity. Baseline is 0.0 tCO2e until local MWh consumption is supplied."
+            "emissions_tco2e": None,
+            "availability_status": "UNAVAILABLE",
+            "availability_reason": (
+                "SEEG Municípios reports Scope 1 fuel combustion at power-generation plants; "
+                "municipal Scope 2 purchased electricity consumption is not reported."
             ),
+            "data_origin": "PROXY",
+            "verification_status": "UNVERIFIED",
+            "data_source": "Not reported in SEEG Municípios Coleção 14.0",
+            "source_reference": seeg_ref,
+            "reference_year": reference_year,
+            "reporting_period": period_str,
+            "geographic_coverage": geo_cov,
+            "operational_coverage": "Scope 2 purchased grid electricity (missing in SEEG)",
+            "methodology_note": (
+                "Explicitly marked UNAVAILABLE (null) rather than 0.0 tCO2e so unmeasured "
+                "electricity consumption is never mistaken for zero emissions."
+            ),
+            "factor_id": None,
+            "limitations": "Scope 2 electricity is excluded from the public SEEG municipal baseline.",
             "gap_note": (
-                f"Obtain annual municipal electricity consumption (MWh) by tariff class for {city_name} "
-                "from Copel Distribuição / ANEEL SINDAT and apply Brazil SIN grid factor via Local Override to upgrade to T1_LOCAL."
+                f"Obtain annual municipality-wide electricity consumption (MWh) for {city_name} "
+                "from Copel Distribuição / ANEEL SINDAT for a year with a verified MCTI SIN grid factor."
             ),
         },
         {
             "subsector_key": "stationary_fuel_combustion",
             "subsector_name": "Stationary Fuel Combustion (Residential, Commercial, Industrial & Public)",
             "emissions_tco2e": stat_fuel,
-            "confidence_tier": "T3_PROXY",
-            "data_source": f"{seeg_src} — Energia (Residencial, Comercial, Público, Agropecuária, Industrial)",
+            "availability_status": "AVAILABLE",
+            "availability_reason": f"Reported in SEEG Coleção 14.0 GWP-AR5 ({reference_year}).",
+            "data_origin": "PROXY",
+            "verification_status": "DOCUMENTED",
+            "data_source": f"SEEG Municípios Coleção 14.0 — Energia (non-transport)",
+            "source_reference": seeg_ref,
             "reference_year": reference_year,
+            "reporting_period": period_str,
+            "geographic_coverage": geo_cov,
+            "operational_coverage": "Scope 1 stationary fuel combustion (GLP, diesel, fuel oil)",
             "methodology_note": (
-                "State-level ANP/EPE fuel balances (GLP, diesel, fuel oil) disaggregated to municipalities "
-                "via IBGE population and industrial/commercial value-added proxies."
+                "State-level ANP/EPE fuel balances disaggregated to municipalities via IBGE "
+                "population and industrial/commercial value-added proxies."
             ),
+            "factor_id": "SEEG_C14_GWP_AR5",
+            "limitations": "Top-down state disaggregation; does not reflect local industrial boiler audits.",
             "gap_note": (
-                f"Obtain ANP municipal LPG (GLP) sales and local industrial boiler fuel logs in {city_name} "
-                "to replace state-disaggregated proxy and upgrade to T1_LOCAL."
+                f"Obtain ANP municipal LPG (GLP) sales and local industrial boiler fuel logs in {city_name}."
             ),
         },
     ]
@@ -191,32 +212,48 @@ def build_sectors_from_subsector_totals(
             "subsector_key": "on_road_transportation",
             "subsector_name": "On-Road Transportation (Urban Fleet, Freight & Public Transit)",
             "emissions_tco2e": on_road,
-            "confidence_tier": "T3_PROXY",
-            "data_source": f"{seeg_src} — Energia / Transportes / Rodoviário",
+            "availability_status": "AVAILABLE",
+            "availability_reason": f"Reported in SEEG Coleção 14.0 GWP-AR5 ({reference_year}).",
+            "data_origin": "PROXY",
+            "verification_status": "DOCUMENTED",
+            "data_source": "SEEG Municípios Coleção 14.0 — Energia / Transportes / Rodoviário",
+            "source_reference": seeg_ref,
             "reference_year": reference_year,
+            "reporting_period": period_str,
+            "geographic_coverage": geo_cov,
+            "operational_coverage": "Scope 1 on-road fossil fuel combustion",
             "methodology_note": (
-                "State/regional ANP fuel distribution (Diesel B14, Gasoline C, Hydrated Ethanol) allocated "
-                "to municipalities using SENATRAN fleet shares and highway VKT modeling."
+                "State/regional ANP fuel distribution allocated to municipalities using "
+                "SENATRAN fleet shares and highway VKT modeling."
             ),
+            "factor_id": "SEEG_C14_GWP_AR5",
+            "limitations": "Includes top-down highway fuel allocation proxies; retail pump sales may differ.",
             "gap_note": (
-                f"Obtain audited ANP SIMP municipal retail fuel sales (diesel, gasoline, ethanol liters) "
-                f"and {city_name} public transit fleet fuel logs to upgrade to T1_LOCAL."
+                f"Obtain municipality-wide ANP SIMP retail fuel sales (diesel, gasoline, ethanol) for {city_name}."
             ),
         },
         {
             "subsector_key": "off_road_and_aviation",
             "subsector_name": "Aviation, Rail & Off-Road Transportation",
             "emissions_tco2e": off_road,
-            "confidence_tier": "T3_PROXY",
-            "data_source": f"{seeg_src} — Energia / Transportes (Aéreo, Ferroviário, Hidroviário)",
+            "availability_status": "AVAILABLE",
+            "availability_reason": f"Reported in SEEG Coleção 14.0 GWP-AR5 ({reference_year}).",
+            "data_origin": "PROXY",
+            "verification_status": "DOCUMENTED",
+            "data_source": "SEEG Municípios Coleção 14.0 — Energia / Transportes (Aéreo, Ferroviário)",
+            "source_reference": seeg_ref,
             "reference_year": reference_year,
+            "reporting_period": period_str,
+            "geographic_coverage": geo_cov,
+            "operational_coverage": "Aviation LTO/uplift and rail/off-road mobile combustion",
             "methodology_note": (
-                "Regional aviation kerosene (QAV), aviation gasoline, and rail/waterway diesel allocated "
-                "by ANAC airport LTO cycles and transport network proxies."
+                "Regional aviation kerosene (QAV) and rail/waterway diesel allocated by ANAC "
+                "airport LTO cycles and transport network proxies."
             ),
+            "factor_id": "SEEG_C14_GWP_AR5",
+            "limitations": "National/regional allocation proxy where local airport uplift logs are absent.",
             "gap_note": (
-                f"Obtain local airport QAV fuel uplift records (if applicable) and municipal off-road "
-                f"machinery diesel logs for {city_name} to upgrade to T1_LOCAL."
+                f"Obtain local airport QAV fuel uplift records (if applicable) and off-road diesel logs for {city_name}."
             ),
         },
     ]
@@ -226,32 +263,48 @@ def build_sectors_from_subsector_totals(
             "subsector_key": "solid_waste_disposal",
             "subsector_name": "Municipal Solid Waste Disposal & Incineration",
             "emissions_tco2e": solid_waste,
-            "confidence_tier": "T3_PROXY",
-            "data_source": f"{seeg_src} — Resíduos (Disposição final, Incineração, Tratamento biológico)",
+            "availability_status": "AVAILABLE",
+            "availability_reason": f"Reported in SEEG Coleção 14.0 GWP-AR5 ({reference_year}).",
+            "data_origin": "PROXY",
+            "verification_status": "DOCUMENTED",
+            "data_source": "SEEG Municípios Coleção 14.0 — Resíduos (Disposição final, Incineração)",
+            "source_reference": seeg_ref,
             "reference_year": reference_year,
+            "reporting_period": period_str,
+            "geographic_coverage": geo_cov,
+            "operational_coverage": "Solid waste landfill disposal, open burning, and biological treatment",
             "methodology_note": (
-                "IPCC First-Order Decay (FOD) model driven by SNIS / IBGE per-capita waste generation "
-                "and regional landfill/dumpsite shares."
+                "IPCC First-Order Decay (FOD) model driven by SNIS / IBGE per-capita waste "
+                "generation and regional landfill/dumpsite shares."
             ),
+            "factor_id": "SEEG_C14_GWP_AR5",
+            "limitations": "Relies on regional SNIS waste composition and landfill gas capture assumptions.",
             "gap_note": (
-                f"Obtain certified municipal landfill weighbridge tonnage (t/year) and active methane "
-                f"capture/flaring logs for {city_name} to upgrade to T1_LOCAL."
+                f"Obtain certified municipal landfill weighbridge tonnage and biogas flaring logs for {city_name}."
             ),
         },
         {
             "subsector_key": "wastewater_treatment",
             "subsector_name": "Domestic & Industrial Wastewater Treatment",
             "emissions_tco2e": wastewater,
-            "confidence_tier": "T3_PROXY",
-            "data_source": f"{seeg_src} — Resíduos (Efluentes domésticos e industriais)",
+            "availability_status": "AVAILABLE",
+            "availability_reason": f"Reported in SEEG Coleção 14.0 GWP-AR5 ({reference_year}).",
+            "data_origin": "PROXY",
+            "verification_status": "DOCUMENTED",
+            "data_source": "SEEG Municípios Coleção 14.0 — Resíduos (Efluentes)",
+            "source_reference": seeg_ref,
             "reference_year": reference_year,
+            "reporting_period": period_str,
+            "geographic_coverage": geo_cov,
+            "operational_coverage": "Domestic and industrial wastewater CH4/N2O",
             "methodology_note": (
                 "Estimated from municipal population, SNIS sewage coverage rates, and industrial BOD "
                 "proxies using IPCC CH4/N2O effluent emission factors."
             ),
+            "factor_id": "SEEG_C14_GWP_AR5",
+            "limitations": "Uses regional BOD and treatment-type shares rather than ETE plant monitoring.",
             "gap_note": (
-                f"Obtain Sanepar / municipal ETE plant-level BOD inflow/outflow and biogas flaring "
-                f"logs for {city_name} to upgrade to T1_LOCAL."
+                f"Obtain Sanepar / municipal ETE plant-level BOD inflow/outflow and biogas flaring logs for {city_name}."
             ),
         },
     ]
@@ -261,16 +314,26 @@ def build_sectors_from_subsector_totals(
             "subsector_key": "industrial_processes",
             "subsector_name": "Industrial Processes & Product Use (IPPU)",
             "emissions_tco2e": ippu_val,
-            "confidence_tier": "T3_PROXY",
-            "data_source": f"{seeg_src} — Processos Industriais",
+            "availability_status": "AVAILABLE",
+            "availability_reason": (
+                f"Reported in SEEG Coleção 14.0 GWP-AR5 ({reference_year}) as {ippu_val:.2f} tCO2e."
+            ),
+            "data_origin": "PROXY",
+            "verification_status": "DOCUMENTED",
+            "data_source": "SEEG Municípios Coleção 14.0 — Processos Industriais",
+            "source_reference": seeg_ref,
             "reference_year": reference_year,
+            "reporting_period": period_str,
+            "geographic_coverage": geo_cov,
+            "operational_coverage": "Non-energy industrial processes and product use",
             "methodology_note": (
                 "Point-source cement/lime/metallurgy allocation and national HFC/solvent proxies "
                 "downscaled by municipal industrial registry."
             ),
+            "factor_id": "SEEG_C14_GWP_AR5",
+            "limitations": "Commercial HFC refrigeration leakage is often not captured at municipal level (may read 0.0).",
             "gap_note": (
-                f"Obtain municipal environmental licensing (IAT / Secretaria de Meio Ambiente) industrial "
-                f"process inventory and commercial HFC refrigerant audit for {city_name} to upgrade to T1_LOCAL."
+                f"Obtain municipal environmental licensing (IAT) industrial process inventory and HFC audit for {city_name}."
             ),
         }
     ]
@@ -280,32 +343,48 @@ def build_sectors_from_subsector_totals(
             "subsector_key": "agriculture_and_livestock",
             "subsector_name": "Agriculture, Livestock & Managed Soils",
             "emissions_tco2e": agro_val,
-            "confidence_tier": "T2_MODELED",
-            "data_source": f"{seeg_src} — Agropecuária (IBGE PPM/PAM Municipal Modeling)",
+            "availability_status": "AVAILABLE",
+            "availability_reason": f"Reported in SEEG Coleção 14.0 GWP-AR5 ({reference_year}).",
+            "data_origin": "MODELED",
+            "verification_status": "DOCUMENTED",
+            "data_source": "SEEG Municípios Coleção 14.0 — Agropecuária (IBGE PPM/PAM)",
+            "source_reference": seeg_ref,
             "reference_year": reference_year,
+            "reporting_period": period_str,
+            "geographic_coverage": geo_cov,
+            "operational_coverage": "Enteric fermentation, manure management, and agricultural soils",
             "methodology_note": (
-                "Spatially/census-modeled from IBGE Pesquisa da Pecuária Municipal (PPM) herd counts, "
-                "PAM crop areas, and Tier 2 IPCC enteric fermentation & soil N2O factors."
+                "Modeled from IBGE Pesquisa da Pecuária Municipal (PPM) herd counts, PAM crop areas, "
+                "and IPCC Tier 2 enteric fermentation & soil N2O factors."
             ),
+            "factor_id": "SEEG_C14_GWP_AR5",
+            "limitations": "Census-based modeling; does not capture farm-level manure biodigesters or precision N practices.",
             "gap_note": (
-                f"Verify local agricultural cooperative fertilizer sales and manure management practices "
-                f"within {city_name} to upgrade to T1_LOCAL."
+                f"Verify local cooperative fertilizer sales and manure management practices within {city_name}."
             ),
         },
         {
             "subsector_key": "land_use_and_forestry",
             "subsector_name": "Land-Use Change & Forestry (Net Emissions/Removals)",
             "emissions_tco2e": lulucf_val,
-            "confidence_tier": "T2_MODELED",
-            "data_source": f"{seeg_src} — Mudança de Uso da Terra e Floresta (MapBiomas Spatial Modeling)",
+            "availability_status": "AVAILABLE",
+            "availability_reason": f"Reported in SEEG Coleção 14.0 GWP-AR5 ({reference_year}).",
+            "data_origin": "MODELED",
+            "verification_status": "DOCUMENTED",
+            "data_source": "SEEG Municípios Coleção 14.0 — Mudança de Uso da Terra e Floresta (MapBiomas)",
+            "source_reference": seeg_ref,
             "reference_year": reference_year,
+            "reporting_period": period_str,
+            "geographic_coverage": geo_cov,
+            "operational_coverage": "Land-use transitions and forest carbon removals",
             "methodology_note": (
                 "Spatially modeled at 30m resolution from MapBiomas annual land-cover transition matrices "
-                "(gross deforestation/soil carbon emissions net of secondary forest & protected-area removals)."
+                "(gross deforestation/soil carbon emissions net of secondary forest removals)."
             ),
+            "factor_id": "SEEG_C14_GWP_AR5",
+            "limitations": "Satellite 30m pixel classification uncertainty and biome-average carbon stocks.",
             "gap_note": (
-                f"Integrate municipal CAR (Cadastro Ambiental Rural) field-verified forest biomass and "
-                f"urban arborization carbon inventory for {city_name} to upgrade to T1_LOCAL."
+                f"Integrate municipal CAR field-verified forest biomass and urban arborization inventory for {city_name}."
             ),
         },
     ]
@@ -320,18 +399,46 @@ def build_sectors_from_subsector_totals(
 
     sectors: Dict[str, Any] = {}
     for code, name, subs in sectors_spec:
-        sec_total = _round2(sum(s["emissions_tco2e"] for s in subs))
-        sec_tier = compute_sector_tier(subs)
+        avail_subs = [s for s in subs if s["availability_status"] == "AVAILABLE"]
+        missing_keys = [s["subsector_key"] for s in subs if s["availability_status"] != "AVAILABLE"]
+
+        cov_status = (
+            "UNAVAILABLE"
+            if not avail_subs
+            else ("PARTIAL" if missing_keys else "COMPLETE")
+        )
+        sec_total = (
+            None
+            if not avail_subs
+            else _round2(sum(float(s["emissions_tco2e"]) for s in avail_subs))
+        )
+
+        origins = {s["data_origin"] for s in subs}
+        sec_origin = next(iter(origins)) if len(origins) == 1 else "MIXED"
+        ver_status = "DOCUMENTED" if avail_subs else "UNVERIFIED"
+
         sectors[code] = {
             "sector_code": code,
             "sector_name": name,
             "emissions_tco2e": sec_total,
-            "confidence_tier": sec_tier,
-            "data_source": f"{seeg_src} ({name})",
+            "coverage_status": cov_status,
+            "missing_subsectors": missing_keys,
+            "data_origin": sec_origin,
+            "verification_status": ver_status,
+            "data_source": f"SEEG Municípios Coleção 14.0 ({name})",
+            "source_reference": seeg_ref,
             "reference_year": reference_year,
-            "methodology_note": subs[0]["methodology_note"]
-            if len(subs) == 1
-            else f"Aggregated from {len(subs)} GPC subsectors in SEEG Coleção 14.0 (GWP-AR5).",
+            "reporting_period": period_str,
+            "geographic_coverage": geo_cov,
+            "operational_coverage": f"GPC {name} sector",
+            "methodology_note": (
+                f"Aggregated from {len(avail_subs)}/{len(subs)} available subsectors in SEEG Coleção 14.0 (GWP-AR5)."
+            ),
+            "limitations": (
+                f"Incomplete coverage: {', '.join(missing_keys)} unavailable."
+                if missing_keys
+                else "Subject to subsector top-down proxy or spatial modeling uncertainties."
+            ),
             "gap_note": " | ".join(f"{s['subsector_name']}: {s['gap_note']}" for s in subs),
             "subsectors": subs,
         }
@@ -342,25 +449,27 @@ def build_sectors_from_subsector_totals(
 def map_adaptabrasil_risks(
     ab_entry: Optional[Dict[str, Any]],
     city_name: str,
+    ibge_code: str,
 ) -> List[Dict[str, Any]]:
     """
-    Map AdaptaBrasil MCTI raw indicators into ClimateRiskIndicator records.
-    If an indicator is missing or unavailable, record an explicit gap rather than
-    fabricating a number.
+    Map AdaptaBrasil MCTI raw indicators into ClimateRiskIndicator records (v2.0.0).
+    Unavailable indicators are strictly represented as `risk_index: None` and `risk_class: None`,
+    while genuine `0.0` values are preserved as `AVAILABLE` + `VERY_LOW`.
     """
     risks_dict = (ab_entry or {}).get("risks", {})
     indicators: List[Dict[str, Any]] = []
+    ab_url = "https://sistema.adaptabrasil.mcti.gov.br/api/hierarquia/adaptabrasil"
 
-    for key, raw in risks_dict.items():
+    for _, raw in risks_dict.items():
         val = raw.get("value")
         rangelabel = raw.get("rangelabel") or ""
         sector_code = raw["sector_code"]
         sector_name = raw["sector_name"]
         ind_name = raw["indicator_name"]
         year = int(raw.get("year") or 2020)
+        ind_id = raw.get("indicator_id")
 
-        if val is None or not isinstance(val, (int, float)):
-            # Explicit gap record without fabricating a score
+        if val is None or isinstance(val, bool) or not isinstance(val, (int, float)):
             indicators.append(
                 {
                     "sector_code": sector_code,
@@ -368,15 +477,23 @@ def map_adaptabrasil_risks(
                     "indicator_name": ind_name,
                     "hazard_description": (
                         f"Data unavailable in AdaptaBrasil MCTI API for {city_name} "
-                        f"(indicator {raw.get('indicator_id')})."
+                        f"(indicator #{ind_id})."
                     ),
-                    "risk_index": 0.0,
-                    "risk_class": "VERY_LOW",
+                    "risk_index": None,
+                    "risk_class": None,
+                    "availability_status": "UNAVAILABLE",
+                    "availability_reason": (
+                        f"AdaptaBrasil MCTI API returned null/unavailable value for indicator #{ind_id} ({year})."
+                    ),
                     "reference_scenario": "HISTORICAL_BASELINE",
                     "reference_year": year,
-                    "confidence_tier": "T3_PROXY",
-                    "data_source": "AdaptaBrasil MCTI (Missing / Unavailable Indicator)",
-                    "methodology_note": "No numeric index returned by AdaptaBrasil API; set to 0.0 placeholder with explicit gap.",
+                    "reporting_period": str(year),
+                    "data_origin": "MODELED",
+                    "verification_status": "UNVERIFIED",
+                    "data_source": f"AdaptaBrasil MCTI API (Indicator #{ind_id}, {year})",
+                    "source_reference": ab_url,
+                    "methodology_note": "No numeric index returned by AdaptaBrasil API; preserved as null and excluded from rankings.",
+                    "limitations": "Missing municipal observation in upstream AdaptaBrasil endpoint.",
                     "gap_note": RISK_GAP_NOTES.get(
                         sector_code,
                         f"Obtain local municipal hazard data for {ind_name} in {city_name}.",
@@ -386,30 +503,36 @@ def map_adaptabrasil_risks(
             continue
 
         risk_val = round(max(0.0, min(1.0, float(val))), 4)
-        risk_class = RANGELABEL_TO_RISK_CLASS.get(rangelabel, "MEDIUM")
+        risk_class = RANGELABEL_TO_RISK_CLASS.get(rangelabel, "VERY_LOW" if risk_val == 0.0 else "MEDIUM")
 
         indicators.append(
             {
                 "sector_code": sector_code,
                 "sector_name": sector_name,
-                "indicator_name": f"{ind_name} ({rangelabel})",
+                "indicator_name": f"{ind_name} ({rangelabel})" if rangelabel else ind_name,
                 "hazard_description": (
                     f"AdaptaBrasil MCTI municipal climate risk index for {ind_name.lower()} "
-                    f"in {city_name} (classification: {rangelabel}, {risk_val:.2f}/1.00)."
+                    f"in {city_name} (classification: {rangelabel or risk_class}, {risk_val:.2f}/1.00)."
                 ),
                 "risk_index": risk_val,
                 "risk_class": risk_class,
+                "availability_status": "AVAILABLE",
+                "availability_reason": f"Published in AdaptaBrasil MCTI API ({year}).",
                 "reference_scenario": "HISTORICAL_BASELINE",
                 "reference_year": year,
-                "confidence_tier": "T2_MODELED",
-                "data_source": f"AdaptaBrasil MCTI API (Indicator #{raw.get('indicator_id')}, {year})",
+                "reporting_period": str(year),
+                "data_origin": "MODELED",
+                "verification_status": "DOCUMENTED",
+                "data_source": f"AdaptaBrasil MCTI API (Indicator #{ind_id}, {year})",
+                "source_reference": ab_url,
                 "methodology_note": (
                     "Composite IPCC climate risk index combining climate hazard, exposure, and "
                     "socio-environmental vulnerability modeled at municipal scale by MCTI/INPE."
                 ),
+                "limitations": "National modeled composite index; does not incorporate recent municipal drainage or civil defense logs.",
                 "gap_note": RISK_GAP_NOTES.get(
                     sector_code,
-                    f"Validate {ind_name} against municipal civil defense and sector records.",
+                    f"Validate {ind_name} against municipal civil defense records.",
                 ),
             }
         )
@@ -419,15 +542,21 @@ def map_adaptabrasil_risks(
             {
                 "sector_code": "GEO_HYDROLOGICAL_DISASTERS",
                 "sector_name": "Geo-hydrological Disasters",
-                "indicator_name": "AdaptaBrasil Municipal Risk Data Missing",
-                "hazard_description": f"No AdaptaBrasil MCTI records found for {city_name}.",
-                "risk_index": 0.0,
-                "risk_class": "VERY_LOW",
+                "indicator_name": "AdaptaBrasil Municipal Risk Data Unavailable",
+                "hazard_description": f"No AdaptaBrasil MCTI records matched IBGE {ibge_code} ({city_name}).",
+                "risk_index": None,
+                "risk_class": None,
+                "availability_status": "UNAVAILABLE",
+                "availability_reason": f"IBGE code {ibge_code} not matched in AdaptaBrasil payload.",
                 "reference_scenario": "HISTORICAL_BASELINE",
                 "reference_year": 2020,
-                "confidence_tier": "T3_PROXY",
+                "reporting_period": "2020",
+                "data_origin": "MODELED",
+                "verification_status": "UNVERIFIED",
                 "data_source": "AdaptaBrasil MCTI (Not Matched)",
+                "source_reference": ab_url,
                 "methodology_note": "Municipality IBGE code not matched in AdaptaBrasil payload.",
+                "limitations": "No upstream AdaptaBrasil indicators available for this municipality.",
                 "gap_note": f"Verify 7-digit IBGE code and integrate local Defesa Civil records for {city_name}.",
             }
         )
@@ -448,32 +577,68 @@ def build_city_record(
     reference_year: int = DEFAULT_REFERENCE_YEAR,
     last_updated: str = DEFAULT_GENERATED_AT,
 ) -> Dict[str, Any]:
-    """Assemble and validate a complete CityClimateRecord dictionary."""
-    sectors = build_sectors_from_subsector_totals(sub_totals, reference_year, city_name)
-
-    total_emissions = _round2(sum(sec["emissions_tco2e"] for sec in sectors.values()))
-    per_capita = _round4(total_emissions / population) if population > 0 else 0.0
-
-    dominant_sector = max(
-        sectors.keys(), key=lambda code: sectors[code]["emissions_tco2e"]
+    """Assemble and validate a complete CityClimateRecord (v2.0.0)."""
+    sectors = build_sectors_from_subsector_totals(
+        sub_totals, reference_year, city_name, ibge_code
     )
 
-    all_subs = [sub for sec in sectors.values() for sub in sec["subsectors"]]
-    total_abs = sum(abs(s["emissions_tco2e"]) for s in all_subs)
-    if total_abs > 0:
-        t1_share = _round4(
-            sum(abs(s["emissions_tco2e"]) for s in all_subs if s["confidence_tier"] == "T1_LOCAL")
-            / total_abs
-        )
-        t2_share = _round4(
-            sum(abs(s["emissions_tco2e"]) for s in all_subs if s["confidence_tier"] == "T2_MODELED")
-            / total_abs
-        )
-        t3_share = _round4(max(0.0, 1.0 - t1_share - t2_share))
-    else:
-        t1_share, t2_share, t3_share = 0.0, 0.0, 1.0
+    avail_sector_vals = [
+        sec["emissions_tco2e"]
+        for sec in sectors.values()
+        if sec["emissions_tco2e"] is not None
+    ]
+    total_emissions = _round2(sum(avail_sector_vals)) if avail_sector_vals else None
+    per_capita = (
+        _round4(total_emissions / population)
+        if total_emissions is not None and population > 0
+        else None
+    )
 
-    climate_risks = map_adaptabrasil_risks(ab_entry, city_name)
+    missing_components = [
+        f"{code}.{mkey}"
+        for code in GPC_SECTOR_CODES
+        for mkey in sectors[code]["missing_subsectors"]
+    ]
+    coverage_status = (
+        "UNAVAILABLE"
+        if not avail_sector_vals
+        else ("PARTIAL" if missing_components else "COMPLETE")
+    )
+
+    avail_sector_codes = [
+        code for code in GPC_SECTOR_CODES if sectors[code]["emissions_tco2e"] is not None
+    ]
+    dominant_sector = (
+        max(avail_sector_codes, key=lambda c: sectors[c]["emissions_tco2e"])
+        if avail_sector_codes
+        else None
+    )
+
+    avail_subs = [
+        sub
+        for sec in sectors.values()
+        for sub in sec["subsectors"]
+        if sub["availability_status"] == "AVAILABLE" and sub["emissions_tco2e"] is not None
+    ]
+    total_abs = sum(abs(float(s["emissions_tco2e"])) for s in avail_subs)
+    if total_abs > 0:
+        local_share = _round4(
+            sum(abs(float(s["emissions_tco2e"])) for s in avail_subs if s["data_origin"] == "LOCAL")
+            / total_abs
+        )
+        modeled_share = _round4(
+            sum(abs(float(s["emissions_tco2e"])) for s in avail_subs if s["data_origin"] == "MODELED")
+            / total_abs
+        )
+        proxy_share = _round4(max(0.0, 1.0 - local_share - modeled_share))
+    else:
+        local_share, modeled_share, proxy_share = 0.0, 0.0, 0.0
+
+    is_mixed, summary_label = _build_provenance_label(
+        local_share, modeled_share, proxy_share, len(missing_components)
+    )
+
+    climate_risks = map_adaptabrasil_risks(ab_entry, city_name, ibge_code)
 
     metadata: Dict[str, Any] = {
         "ibge_code": ibge_code,
@@ -488,17 +653,21 @@ def build_city_record(
         metadata["biome"] = biome
 
     record = {
-        "schema_version": "1.0.0",
+        "schema_version": CURRENT_SCHEMA_VERSION,
         "metadata": metadata,
         "emissions_summary": {
             "total_emissions_tco2e": total_emissions,
             "per_capita_tco2e": per_capita,
+            "coverage_status": coverage_status,
+            "missing_components": missing_components,
             "reference_year": reference_year,
             "dominant_sector": dominant_sector,
-            "tier_breakdown": {
-                "T1_LOCAL_share": t1_share,
-                "T2_MODELED_share": t2_share,
-                "T3_PROXY_share": t3_share,
+            "provenance_mix": {
+                "local_share": local_share,
+                "modeled_share": modeled_share,
+                "proxy_share": proxy_share,
+                "is_mixed": is_mixed,
+                "summary_label": summary_label,
             },
         },
         "sectors": sectors,
@@ -538,11 +707,9 @@ def build_all_cities(
     df = pd.read_csv(seeg_csv, usecols=usecols, low_memory=False)
     df = df[df["Gás"] == "CO2e (t) GWP-AR5"].copy()
     df["ibge_str"] = df["IBGE"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
-    # Keep only valid 7-digit Paraná municipality codes (exclude 4100000 NA/unallocated)
     df = df[df["ibge_str"].str.match(r"^41\d{5}$") & (df["ibge_str"] != "4100000")].copy()
     df[year_col] = pd.to_numeric(df[year_col], errors="coerce").fillna(0.0)
 
-    # Classify each row into GPC subsector
     df["gpc_subsector"] = [
         classify_seeg_row(s, c, sc)[1]
         for s, c, sc in zip(
@@ -552,7 +719,6 @@ def build_all_cities(
         )
     ]
 
-    # Aggregate emissions by (ibge_str, gpc_subsector)
     grouped = df.groupby(["ibge_str", "gpc_subsector"])[year_col].sum()
     city_biomes = (
         df.dropna(subset=["Bioma"])
@@ -608,11 +774,17 @@ def build_all_cities(
             json.dump(record, f, ensure_ascii=False, indent=2)
 
         summary = record["emissions_summary"]
-        tiers = summary["tier_breakdown"]
-        primary_tier = (
-            "T2_MODELED" if tiers["T2_MODELED_share"] >= tiers["T3_PROXY_share"] else "T3_PROXY"
+        pmix = summary["provenance_mix"]
+        available_risks = [
+            r
+            for r in record["climate_risks"]
+            if r["availability_status"] == "AVAILABLE" and r["risk_index"] is not None
+        ]
+        top_risk = (
+            max(available_risks, key=lambda r: float(r["risk_index"]))
+            if available_risks
+            else None
         )
-        top_risk = max(record["climate_risks"], key=lambda r: r["risk_index"])
 
         index_entries.append(
             {
@@ -624,31 +796,33 @@ def build_all_cities(
                 "total_emissions_tco2e": summary["total_emissions_tco2e"],
                 "total_tco2e": summary["total_emissions_tco2e"],
                 "per_capita_tco2e": summary["per_capita_tco2e"],
+                "coverage_status": summary["coverage_status"],
+                "missing_components_count": len(summary["missing_components"]),
                 "dominant_sector": summary["dominant_sector"],
-                "primary_confidence_tier": primary_tier,
-                "proxy_share_pct": round(tiers["T3_PROXY_share"] * 100, 2),
-                "modeled_share_pct": round(tiers["T2_MODELED_share"] * 100, 2),
+                "provenance_label": pmix["summary_label"],
+                "local_share_pct": round(pmix["local_share"] * 100, 2),
+                "modeled_share_pct": round(pmix["modeled_share"] * 100, 2),
+                "proxy_share_pct": round(pmix["proxy_share"] * 100, 2),
                 "sector_totals": {
                     code: record["sectors"][code]["emissions_tco2e"]
-                    for code in (
-                        "STATIONARY_ENERGY",
-                        "TRANSPORTATION",
-                        "WASTE",
-                        "IPPU",
-                        "AFOLU",
-                    )
+                    for code in GPC_SECTOR_CODES
                 },
-                "top_climate_risk": {
-                    "sector_code": top_risk["sector_code"],
-                    "indicator_name": top_risk["indicator_name"],
-                    "risk_index": top_risk["risk_index"],
-                    "risk_class": top_risk["risk_class"],
-                },
+                "top_climate_risk": (
+                    {
+                        "sector_code": top_risk["sector_code"],
+                        "indicator_name": top_risk["indicator_name"],
+                        "risk_index": top_risk["risk_index"],
+                        "risk_class": top_risk["risk_class"],
+                        "availability_status": "AVAILABLE",
+                    }
+                    if top_risk
+                    else None
+                ),
             }
         )
 
     index_manifest = {
-        "schema_version": "1.0.0",
+        "schema_version": CURRENT_SCHEMA_VERSION,
         "generated_at": DEFAULT_GENERATED_AT,
         "municipalities": index_entries,
     }

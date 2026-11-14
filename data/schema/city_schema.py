@@ -1,58 +1,38 @@
 """
 Canonical Python Schema, JSON Schema definition, and deterministic validator
-for Municipal Climate Lens (`data/schema/city_schema.py`).
+for Municipal Climate Lens (`data/schema/city_schema.py`, Schema v2.0.0).
 
 Matches `data/schema/city.ts` 1-to-1 for Brazilian municipal climate baseline
 records (`public/data/<ibge_code>.json`) and client-side `LocalOverride` payloads.
-Supports both Pydantic v2 (when installed) and zero-dependency standard-library
-validation + JSON Schema export.
 """
 
 from __future__ import annotations
 
 import json
+import math
 import re
 import sys
-from dataclasses import dataclass
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List
 
-ConfidenceTier = Literal["T1_LOCAL", "T2_MODELED", "T3_PROXY"]
+CURRENT_SCHEMA_VERSION = "2.0.0"
 
-GPCSectorCode = Literal[
-    "STATIONARY_ENERGY",
-    "TRANSPORTATION",
-    "WASTE",
-    "IPPU",
-    "AFOLU",
-]
+AVAILABILITY_STATUSES = ("AVAILABLE", "UNAVAILABLE", "NOT_APPLICABLE")
+COVERAGE_STATUSES = ("COMPLETE", "PARTIAL", "UNAVAILABLE")
+DATA_ORIGINS = ("LOCAL", "MODELED", "PROXY")
+VERIFICATION_STATUSES = (
+    "UNVERIFIED",
+    "DOCUMENTED",
+    "REVIEW_REQUIRED",
+    "INDEPENDENTLY_VERIFIED",
+)
+COVERAGE_BOUNDARIES = (
+    "MUNICIPALITY_WIDE",
+    "MUNICIPAL_GOVERNMENT_FLEET",
+    "PUBLIC_TRANSIT_OPERATOR",
+    "PARTIAL_FACILITY_OR_SECTOR",
+    "UNKNOWN",
+)
 
-AdaptaBrasilSectorCode = Literal[
-    "GEO_HYDROLOGICAL_DISASTERS",
-    "WATER_RESOURCES",
-    "HEALTH",
-    "ENERGY",
-    "FOOD_SECURITY",
-]
-
-ClimateRiskClass = Literal[
-    "VERY_LOW",
-    "LOW",
-    "MEDIUM",
-    "HIGH",
-    "VERY_HIGH",
-]
-
-ClimateScenario = Literal[
-    "HISTORICAL_BASELINE",
-    "RCP4_5_2030",
-    "RCP4_5_2050",
-    "RCP8_5_2030",
-    "RCP8_5_2050",
-    "SSP2_4_5_2030",
-    "SSP5_8_5_2050",
-]
-
-CONFIDENCE_TIERS = ("T1_LOCAL", "T2_MODELED", "T3_PROXY")
 GPC_SECTOR_CODES = (
     "STATIONARY_ENERGY",
     "TRANSPORTATION",
@@ -91,7 +71,7 @@ CITY_CLIMATE_JSON_SCHEMA: Dict[str, Any] = {
         "last_updated",
     ],
     "properties": {
-        "schema_version": {"const": "1.0.0"},
+        "schema_version": {"const": CURRENT_SCHEMA_VERSION},
         "metadata": {
             "type": "object",
             "required": ["ibge_code", "name", "state", "population", "population_year"],
@@ -110,162 +90,43 @@ CITY_CLIMATE_JSON_SCHEMA: Dict[str, Any] = {
             "required": [
                 "total_emissions_tco2e",
                 "per_capita_tco2e",
+                "coverage_status",
+                "missing_components",
                 "reference_year",
                 "dominant_sector",
-                "tier_breakdown",
+                "provenance_mix",
             ],
             "properties": {
-                "total_emissions_tco2e": {"type": "number"},
-                "per_capita_tco2e": {"type": "number"},
+                "total_emissions_tco2e": {"type": ["number", "null"]},
+                "per_capita_tco2e": {"type": ["number", "null"]},
+                "coverage_status": {"type": "string", "enum": list(COVERAGE_STATUSES)},
+                "missing_components": {"type": "array", "items": {"type": "string"}},
                 "reference_year": {"type": "integer", "minimum": 1990, "maximum": 2100},
-                "dominant_sector": {"type": "string", "enum": list(GPC_SECTOR_CODES)},
-                "tier_breakdown": {
+                "dominant_sector": {
+                    "type": ["string", "null"],
+                    "enum": [*GPC_SECTOR_CODES, None],
+                },
+                "provenance_mix": {
                     "type": "object",
-                    "required": ["T1_LOCAL_share", "T2_MODELED_share", "T3_PROXY_share"],
-                    "properties": {
-                        "T1_LOCAL_share": {"type": "number", "minimum": 0.0, "maximum": 1.0},
-                        "T2_MODELED_share": {"type": "number", "minimum": 0.0, "maximum": 1.0},
-                        "T3_PROXY_share": {"type": "number", "minimum": 0.0, "maximum": 1.0},
-                    },
+                    "required": [
+                        "local_share",
+                        "modeled_share",
+                        "proxy_share",
+                        "is_mixed",
+                        "summary_label",
+                    ],
                 },
             },
         },
         "sectors": {
             "type": "object",
             "required": list(GPC_SECTOR_CODES),
-            "properties": {
-                code: {"$ref": "#/$defs/SectorEmissionRecord"} for code in GPC_SECTOR_CODES
-            },
         },
         "climate_risks": {
             "type": "array",
             "minItems": 1,
-            "items": {"$ref": "#/$defs/ClimateRiskIndicator"},
         },
         "last_updated": {"type": "string", "minLength": 1},
-    },
-    "$defs": {
-        "SubsectorEmissionRecord": {
-            "type": "object",
-            "required": [
-                "subsector_key",
-                "subsector_name",
-                "emissions_tco2e",
-                "confidence_tier",
-                "data_source",
-                "reference_year",
-                "methodology_note",
-                "gap_note",
-            ],
-            "properties": {
-                "subsector_key": {"type": "string", "minLength": 1},
-                "subsector_name": {"type": "string", "minLength": 1},
-                "emissions_tco2e": {"type": "number"},
-                "confidence_tier": {"type": "string", "enum": list(CONFIDENCE_TIERS)},
-                "data_source": {"type": "string", "minLength": 1},
-                "reference_year": {"type": "integer", "minimum": 1990, "maximum": 2100},
-                "methodology_note": {"type": "string", "minLength": 1},
-                "gap_note": {"type": "string", "minLength": 1},
-            },
-        },
-        "SectorEmissionRecord": {
-            "type": "object",
-            "required": [
-                "sector_code",
-                "sector_name",
-                "emissions_tco2e",
-                "confidence_tier",
-                "data_source",
-                "reference_year",
-                "methodology_note",
-                "gap_note",
-                "subsectors",
-            ],
-            "properties": {
-                "sector_code": {"type": "string", "enum": list(GPC_SECTOR_CODES)},
-                "sector_name": {"type": "string", "minLength": 1},
-                "emissions_tco2e": {"type": "number"},
-                "confidence_tier": {"type": "string", "enum": list(CONFIDENCE_TIERS)},
-                "data_source": {"type": "string", "minLength": 1},
-                "reference_year": {"type": "integer", "minimum": 1990, "maximum": 2100},
-                "methodology_note": {"type": "string", "minLength": 1},
-                "gap_note": {"type": "string", "minLength": 1},
-                "subsectors": {
-                    "type": "array",
-                    "minItems": 1,
-                    "items": {"$ref": "#/$defs/SubsectorEmissionRecord"},
-                },
-            },
-        },
-        "ClimateRiskIndicator": {
-            "type": "object",
-            "required": [
-                "sector_code",
-                "sector_name",
-                "indicator_name",
-                "hazard_description",
-                "risk_index",
-                "risk_class",
-                "reference_scenario",
-                "reference_year",
-                "confidence_tier",
-                "data_source",
-                "methodology_note",
-                "gap_note",
-            ],
-            "properties": {
-                "sector_code": {"type": "string", "enum": list(ADAPTABRASIL_SECTORS)},
-                "sector_name": {"type": "string", "minLength": 1},
-                "indicator_name": {"type": "string", "minLength": 1},
-                "hazard_description": {"type": "string", "minLength": 1},
-                "risk_index": {"type": "number", "minimum": 0.0, "maximum": 1.0},
-                "risk_class": {"type": "string", "enum": list(RISK_CLASSES)},
-                "reference_scenario": {"type": "string", "enum": list(CLIMATE_SCENARIOS)},
-                "reference_year": {"type": "integer", "minimum": 1990, "maximum": 2100},
-                "confidence_tier": {"type": "string", "enum": list(CONFIDENCE_TIERS)},
-                "data_source": {"type": "string", "minLength": 1},
-                "methodology_note": {"type": "string", "minLength": 1},
-                "gap_note": {"type": "string", "minLength": 1},
-            },
-        },
-        "LocalOverride": {
-            "type": "object",
-            "properties": {
-                "reference_year": {"type": "integer", "minimum": 1990, "maximum": 2100},
-                "electricity": {
-                    "type": "object",
-                    "required": ["mwh_per_year"],
-                    "properties": {
-                        "mwh_per_year": {"type": "number", "minimum": 0},
-                        "source_note": {"type": "string"},
-                    },
-                },
-                "fleet_fuels": {
-                    "type": "object",
-                    "required": ["diesel_liters", "gasoline_liters", "ethanol_liters"],
-                    "properties": {
-                        "diesel_liters": {"type": "number", "minimum": 0},
-                        "gasoline_liters": {"type": "number", "minimum": 0},
-                        "ethanol_liters": {"type": "number", "minimum": 0},
-                        "source_note": {"type": "string"},
-                    },
-                },
-                "solid_waste": {
-                    "type": "object",
-                    "required": ["tons_per_year", "has_methane_capture"],
-                    "properties": {
-                        "tons_per_year": {"type": "number", "minimum": 0},
-                        "has_methane_capture": {"type": "boolean"},
-                        "methane_capture_efficiency": {
-                            "type": "number",
-                            "minimum": 0.0,
-                            "maximum": 1.0,
-                        },
-                        "source_note": {"type": "string"},
-                    },
-                },
-            },
-        },
     },
 }
 
@@ -274,8 +135,12 @@ def _is_non_empty_str(val: Any) -> bool:
     return isinstance(val, str) and len(val.strip()) > 0
 
 
-def _is_number(val: Any) -> bool:
-    return isinstance(val, (int, float)) and not isinstance(val, bool)
+def _is_finite_number(val: Any) -> bool:
+    return (
+        isinstance(val, (int, float))
+        and not isinstance(val, bool)
+        and math.isfinite(float(val))
+    )
 
 
 def validate_city_climate_record(payload: Dict[str, Any]) -> List[str]:
@@ -284,8 +149,10 @@ def validate_city_climate_record(payload: Dict[str, Any]) -> List[str]:
     if not isinstance(payload, dict):
         return ["Root value must be a JSON object"]
 
-    if payload.get("schema_version") != "1.0.0":
-        errors.append("schema_version: must equal '1.0.0'")
+    if payload.get("schema_version") != CURRENT_SCHEMA_VERSION:
+        errors.append(
+            f"schema_version: expected '{CURRENT_SCHEMA_VERSION}', got {payload.get('schema_version')!r}"
+        )
 
     meta = payload.get("metadata")
     if not isinstance(meta, dict):
@@ -303,10 +170,17 @@ def validate_city_climate_record(payload: Dict[str, Any]) -> List[str]:
         if not isinstance(pop, int) or isinstance(pop, bool) or pop <= 0:
             errors.append("metadata.population: must be a positive integer")
         pop_yr = meta.get("population_year")
-        if not isinstance(pop_yr, int) or isinstance(pop_yr, bool) or not (1990 <= pop_yr <= 2100):
+        if (
+            not isinstance(pop_yr, int)
+            or isinstance(pop_yr, bool)
+            or not (1990 <= pop_yr <= 2100)
+        ):
             errors.append("metadata.population_year: must be an integer year")
 
     sectors = payload.get("sectors")
+    avail_sector_sum = 0.0
+    avail_sector_count = 0
+
     if not isinstance(sectors, dict):
         errors.append("sectors: must be an object")
     else:
@@ -320,46 +194,107 @@ def validate_city_climate_record(payload: Dict[str, Any]) -> List[str]:
                 errors.append(f"{prefix}.sector_code: must equal '{code}'")
             if not _is_non_empty_str(sec.get("sector_name")):
                 errors.append(f"{prefix}.sector_name: must be a non-empty string")
-            if not _is_number(sec.get("emissions_tco2e")):
-                errors.append(f"{prefix}.emissions_tco2e: must be a number")
-            if sec.get("confidence_tier") not in CONFIDENCE_TIERS:
-                errors.append(f"{prefix}.confidence_tier: invalid tier")
-            if not _is_non_empty_str(sec.get("data_source")):
-                errors.append(f"{prefix}.data_source: must be a non-empty string")
-            if not _is_non_empty_str(sec.get("methodology_note")):
-                errors.append(f"{prefix}.methodology_note: must be a non-empty string")
-            if not _is_non_empty_str(sec.get("gap_note")):
-                errors.append(f"{prefix}.gap_note: must be a non-empty string")
+            if sec.get("coverage_status") not in COVERAGE_STATUSES:
+                errors.append(f"{prefix}.coverage_status: invalid")
+            if sec.get("data_origin") not in (*DATA_ORIGINS, "MIXED"):
+                errors.append(f"{prefix}.data_origin: invalid")
+            if sec.get("verification_status") not in VERIFICATION_STATUSES:
+                errors.append(f"{prefix}.verification_status: invalid")
+
+            for req_str in (
+                "data_source",
+                "source_reference",
+                "reporting_period",
+                "geographic_coverage",
+                "operational_coverage",
+                "methodology_note",
+                "limitations",
+                "gap_note",
+            ):
+                if not _is_non_empty_str(sec.get(req_str)):
+                    errors.append(f"{prefix}.{req_str}: must be a non-empty string")
 
             subs = sec.get("subsectors")
             if not isinstance(subs, list) or len(subs) == 0:
                 errors.append(f"{prefix}.subsectors: must be a non-empty list")
             else:
                 sub_sum = 0.0
+                avail_sub_count = 0
                 for idx, sub in enumerate(subs):
                     sp = f"{prefix}.subsectors[{idx}]"
                     if not isinstance(sub, dict):
                         errors.append(f"{sp}: must be an object")
                         continue
+                    avail_status = sub.get("availability_status")
+                    if avail_status not in AVAILABILITY_STATUSES:
+                        errors.append(f"{sp}.availability_status: invalid")
+                    elif avail_status == "AVAILABLE":
+                        if not _is_finite_number(sub.get("emissions_tco2e")):
+                            errors.append(
+                                f"{sp}.emissions_tco2e: must be finite number when AVAILABLE"
+                            )
+                        else:
+                            sub_sum += float(sub["emissions_tco2e"])
+                            avail_sub_count += 1
+                    else:
+                        if sub.get("emissions_tco2e") is not None:
+                            errors.append(
+                                f"{sp}.emissions_tco2e: must be null when {avail_status}"
+                            )
+
+                    if sub.get("data_origin") not in DATA_ORIGINS:
+                        errors.append(f"{sp}.data_origin: invalid")
+                    if sub.get("verification_status") not in VERIFICATION_STATUSES:
+                        errors.append(f"{sp}.verification_status: invalid")
                     for req_str in (
                         "subsector_key",
                         "subsector_name",
+                        "availability_reason",
                         "data_source",
+                        "source_reference",
+                        "reporting_period",
+                        "geographic_coverage",
+                        "operational_coverage",
                         "methodology_note",
+                        "limitations",
                         "gap_note",
                     ):
                         if not _is_non_empty_str(sub.get(req_str)):
                             errors.append(f"{sp}.{req_str}: must be a non-empty string")
-                    if not _is_number(sub.get("emissions_tco2e")):
-                        errors.append(f"{sp}.emissions_tco2e: must be a number")
+
+                if avail_sub_count == 0:
+                    if sec.get("emissions_tco2e") is not None:
+                        errors.append(
+                            f"{prefix}.emissions_tco2e: must be null when no subsectors are AVAILABLE"
+                        )
+                else:
+                    if not _is_finite_number(sec.get("emissions_tco2e")):
+                        errors.append(f"{prefix}.emissions_tco2e: must be a finite number")
                     else:
-                        sub_sum += float(sub["emissions_tco2e"])
-                    if sub.get("confidence_tier") not in CONFIDENCE_TIERS:
-                        errors.append(f"{sp}.confidence_tier: invalid tier")
-                if _is_number(sec.get("emissions_tco2e")) and abs(float(sec["emissions_tco2e"]) - sub_sum) > 0.01:
-                    errors.append(
-                        f"{prefix}.emissions_tco2e ({sec['emissions_tco2e']}) does not match sum of subsectors ({sub_sum:.2f})"
-                    )
+                        sec_val = float(sec["emissions_tco2e"])
+                        if abs(sec_val - sub_sum) > 0.02:
+                            errors.append(
+                                f"{prefix}.emissions_tco2e ({sec_val}) does not match sum of AVAILABLE subsectors ({sub_sum:.2f})"
+                            )
+                        avail_sector_sum += sec_val
+                        avail_sector_count += 1
+
+    summary = payload.get("emissions_summary")
+    if not isinstance(summary, dict):
+        errors.append("emissions_summary: must be an object")
+    else:
+        if avail_sector_count == 0:
+            if summary.get("total_emissions_tco2e") is not None:
+                errors.append(
+                    "emissions_summary.total_emissions_tco2e: must be null when no sectors are AVAILABLE"
+                )
+        elif not _is_finite_number(summary.get("total_emissions_tco2e")):
+            errors.append("emissions_summary.total_emissions_tco2e: must be a finite number")
+        elif abs(float(summary["total_emissions_tco2e"]) - avail_sector_sum) > 0.05:
+            errors.append(
+                f"emissions_summary.total_emissions_tco2e ({summary['total_emissions_tco2e']}) "
+                f"does not match sum of AVAILABLE sectors ({avail_sector_sum:.2f})"
+            )
 
     risks = payload.get("climate_risks")
     if not isinstance(risks, list) or len(risks) == 0:
@@ -372,19 +307,36 @@ def validate_city_climate_record(payload: Dict[str, Any]) -> List[str]:
                 continue
             if r.get("sector_code") not in ADAPTABRASIL_SECTORS:
                 errors.append(f"{rp}.sector_code: invalid AdaptaBrasil sector code")
-            ri = r.get("risk_index")
-            if not _is_number(ri) or not (0.0 <= float(ri) <= 1.0):
-                errors.append(f"{rp}.risk_index: must be between 0.0 and 1.0")
-            if r.get("confidence_tier") not in CONFIDENCE_TIERS:
-                errors.append(f"{rp}.confidence_tier: invalid tier")
+            avail_status = r.get("availability_status")
+            if avail_status not in AVAILABILITY_STATUSES:
+                errors.append(f"{rp}.availability_status: invalid")
+            elif avail_status == "AVAILABLE":
+                ri = r.get("risk_index")
+                if not _is_finite_number(ri) or not (0.0 <= float(ri) <= 1.0):
+                    errors.append(f"{rp}.risk_index: must be between 0.0 and 1.0")
+                if r.get("risk_class") not in RISK_CLASSES:
+                    errors.append(f"{rp}.risk_class: invalid")
+            else:
+                if r.get("risk_index") is not None:
+                    errors.append(f"{rp}.risk_index: must be null when {avail_status}")
+                if r.get("risk_class") is not None:
+                    errors.append(f"{rp}.risk_class: must be null when {avail_status}")
+
+            if r.get("data_origin") not in DATA_ORIGINS:
+                errors.append(f"{rp}.data_origin: invalid")
+            if r.get("verification_status") not in VERIFICATION_STATUSES:
+                errors.append(f"{rp}.verification_status: invalid")
             for req_str in (
                 "sector_name",
                 "indicator_name",
                 "hazard_description",
-                "risk_class",
+                "availability_reason",
                 "reference_scenario",
+                "reporting_period",
                 "data_source",
+                "source_reference",
                 "methodology_note",
+                "limitations",
                 "gap_note",
             ):
                 if not _is_non_empty_str(r.get(req_str)):

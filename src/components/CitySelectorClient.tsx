@@ -8,19 +8,15 @@ import {
   ArrowRight,
   ArrowUp,
   ArrowUpDown,
-  BarChart3,
   Building2,
-  Database,
   Search,
-  ShieldAlert,
-  TrendingUp,
 } from "lucide-react";
 import {
   CityIndexEntry,
   GPC_SECTOR_CODES,
   GPCSectorCode,
 } from "../../data/schema/city";
-import { ConfidenceBadge, RiskClassBadge } from "./ConfidenceBadge";
+import { CoverageBadge, RiskClassBadge } from "./ConfidenceBadge";
 
 const SECTOR_LABELS: Record<GPCSectorCode, string> = {
   STATIONARY_ENERGY: "Stationary Energy",
@@ -31,14 +27,24 @@ const SECTOR_LABELS: Record<GPCSectorCode, string> = {
 };
 
 const SECTOR_BAR_COLORS: Record<GPCSectorCode, string> = {
-  STATIONARY_ENERGY: "bg-indigo-500",
-  TRANSPORTATION: "bg-amber-500",
-  WASTE: "bg-emerald-600",
-  IPPU: "bg-purple-500",
-  AFOLU: "bg-teal-600",
+  STATIONARY_ENERGY: "bg-[#334155]",
+  TRANSPORTATION: "bg-[#b45309]",
+  WASTE: "bg-[#1b4332]",
+  IPPU: "bg-[#6d28d9]",
+  AFOLU: "bg-[#0f766e]",
 };
 
-type RiskFilter = "ALL" | "HIGH" | "MEDIUM" | "LOW";
+const FEATURED_IBGE_CODES = [
+  "4106902", // Curitiba
+  "4113700", // Londrina
+  "4115200", // Maringá
+  "4104808", // Cascavel
+  "4119905", // Ponta Grossa
+  "4108304", // Foz do Iguaçu
+];
+
+type RiskFilter = "ALL" | "HIGH" | "MEDIUM" | "LOW" | "UNAVAILABLE";
+type MatrixLens = "RISK" | "PROXY" | "PER_CAPITA";
 type SortField =
   | "name"
   | "population"
@@ -63,11 +69,45 @@ function formatNumber(n: number, decimals = 0): string {
   });
 }
 
-function getRiskBucket(entry: CityIndexEntry): "HIGH" | "MEDIUM" | "LOW" {
-  const rc = entry.top_climate_risk?.risk_class;
-  if (rc === "VERY_HIGH" || rc === "HIGH") return "HIGH";
-  if (rc === "MEDIUM") return "MEDIUM";
+function getRiskBucket(
+  entry: CityIndexEntry
+): "HIGH" | "MEDIUM" | "LOW" | "UNAVAILABLE" {
+  const r = entry.top_climate_risk;
+  if (!r || r.availability_status !== "AVAILABLE" || r.risk_index === null) {
+    return "UNAVAILABLE";
+  }
+  if (r.risk_class === "VERY_HIGH" || r.risk_class === "HIGH") return "HIGH";
+  if (r.risk_class === "MEDIUM") return "MEDIUM";
   return "LOW";
+}
+
+function getTileColor(entry: CityIndexEntry, lens: MatrixLens): string {
+  if (lens === "RISK") {
+    const r = entry.top_climate_risk;
+    if (!r || r.availability_status !== "AVAILABLE" || r.risk_index === null) {
+      return "bg-[#e7e2d8]";
+    }
+    if (r.risk_class === "VERY_HIGH") return "bg-[#9a3412]";
+    if (r.risk_class === "HIGH") return "bg-[#d97706]";
+    if (r.risk_class === "MEDIUM") return "bg-[#eab308]";
+    return "bg-[#1b4332]/75";
+  }
+
+  if (lens === "PROXY") {
+    const p = entry.proxy_share_pct;
+    if (p >= 75) return "bg-[#b45309]";
+    if (p >= 50) return "bg-[#d97706]";
+    if (p >= 25) return "bg-[#0284c7]";
+    return "bg-[#1d4ed8]";
+  }
+
+  // PER_CAPITA
+  const pc = entry.per_capita_tco2e;
+  if (pc === null) return "bg-[#e7e2d8]";
+  if (pc >= 20) return "bg-[#7c2d12]";
+  if (pc >= 10) return "bg-[#b45309]";
+  if (pc >= 4) return "bg-[#0f766e]";
+  return "bg-[#1b4332]/50";
 }
 
 export function CitySelectorClient({
@@ -78,6 +118,8 @@ export function CitySelectorClient({
   const router = useRouter();
   const [query, setQuery] = useState("");
   const [riskFilter, setRiskFilter] = useState<RiskFilter>("ALL");
+  const [matrixLens, setMatrixLens] = useState<MatrixLens>("RISK");
+  const [hoveredCity, setHoveredCity] = useState<CityIndexEntry | null>(null);
   const [sortField, setSortField] = useState<SortField>("emissions");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
 
@@ -86,16 +128,27 @@ export function CitySelectorClient({
     [municipalities]
   );
 
-  // Deterministic Paraná Statewide KPI Rollup
+  const featuredCities = useMemo(() => {
+    const byCode = new Map(municipalities.map((m) => [m.ibge_code, m]));
+    return FEATURED_IBGE_CODES.map((code) => byCode.get(code)).filter(
+      (c): c is CityIndexEntry => Boolean(c)
+    );
+  }, [municipalities]);
+
+  // Deterministic Paraná Statewide KPI Rollup (excluding missing/null values from numerical sums)
   const statewide = useMemo(() => {
     let totalEmissions = 0;
     let totalPopulation = 0;
     let weightedT2 = 0;
     let weightedT3 = 0;
-    let totalAbsForTier = 0;
+    let totalAbsForOrigin = 0;
     let highRiskCount = 0;
     let mediumRiskCount = 0;
     let lowRiskCount = 0;
+    let unavailableRiskCount = 0;
+    let partialCityCount = 0;
+    let topEmitter: CityIndexEntry | null = null;
+    let topPerCapita: CityIndexEntry | null = null;
 
     const sectorTotals: Record<GPCSectorCode, number> = {
       STATIONARY_ENERGY: 0,
@@ -106,36 +159,60 @@ export function CitySelectorClient({
     };
 
     for (const m of municipalities) {
-      totalEmissions += m.total_tco2e;
       totalPopulation += m.population;
+      if (m.coverage_status !== "COMPLETE") {
+        partialCityCount += 1;
+      }
 
-      const weight = Math.abs(m.total_tco2e);
-      totalAbsForTier += weight;
-      weightedT2 += weight * (m.modeled_share_pct / 100);
-      weightedT3 += weight * (m.proxy_share_pct / 100);
+      if (m.total_tco2e !== null) {
+        totalEmissions += m.total_tco2e;
+        const weight = Math.abs(m.total_tco2e);
+        totalAbsForOrigin += weight;
+        weightedT2 += weight * (m.modeled_share_pct / 100);
+        weightedT3 += weight * (m.proxy_share_pct / 100);
+
+        if (
+          topEmitter === null ||
+          (topEmitter.total_tco2e ?? -Infinity) < m.total_tco2e
+        ) {
+          topEmitter = m;
+        }
+      }
+
+      if (m.per_capita_tco2e !== null) {
+        if (
+          topPerCapita === null ||
+          (topPerCapita.per_capita_tco2e ?? -Infinity) < m.per_capita_tco2e
+        ) {
+          topPerCapita = m;
+        }
+      }
 
       const bucket = getRiskBucket(m);
       if (bucket === "HIGH") highRiskCount += 1;
       else if (bucket === "MEDIUM") mediumRiskCount += 1;
-      else lowRiskCount += 1;
+      else if (bucket === "LOW") lowRiskCount += 1;
+      else unavailableRiskCount += 1;
 
       if (m.sector_totals) {
         for (const code of GPC_SECTOR_CODES) {
-          sectorTotals[code] += m.sector_totals[code] ?? 0;
+          const val = m.sector_totals[code];
+          if (val !== null && val !== undefined) {
+            sectorTotals[code] += val;
+          }
         }
       }
     }
 
+    const availableRiskCities = municipalities.length - unavailableRiskCount;
     const perCapitaAvg =
       totalPopulation > 0 ? totalEmissions / totalPopulation : 0;
-    const t2SharePct =
-      totalAbsForTier > 0 ? (weightedT2 / totalAbsForTier) * 100 : 0;
-    const t3SharePct =
-      totalAbsForTier > 0 ? (weightedT3 / totalAbsForTier) * 100 : 0;
+    const modeledSharePct =
+      totalAbsForOrigin > 0 ? (weightedT2 / totalAbsForOrigin) * 100 : 0;
+    const proxySharePct =
+      totalAbsForOrigin > 0 ? (weightedT3 / totalAbsForOrigin) * 100 : 0;
     const highRiskPct =
-      municipalities.length > 0
-        ? (highRiskCount / municipalities.length) * 100
-        : 0;
+      availableRiskCities > 0 ? (highRiskCount / availableRiskCities) * 100 : 0;
     const maxAbsSector = Math.max(
       ...GPC_SECTOR_CODES.map((c) => Math.abs(sectorTotals[c])),
       1
@@ -145,16 +222,41 @@ export function CitySelectorClient({
       totalEmissions,
       totalPopulation,
       perCapitaAvg,
-      t2SharePct,
-      t3SharePct,
+      modeledSharePct,
+      proxySharePct,
       highRiskCount,
       mediumRiskCount,
       lowRiskCount,
+      unavailableRiskCount,
+      availableRiskCities,
+      partialCityCount,
       highRiskPct,
       sectorTotals,
       maxAbsSector,
+      topEmitter,
+      topPerCapita,
     };
   }, [municipalities]);
+
+  const matrixCities = useMemo(() => {
+    return [...municipalities].sort((a, b) => {
+      if (matrixLens === "RISK") {
+        const ra =
+          a.top_climate_risk?.availability_status === "AVAILABLE"
+            ? (a.top_climate_risk.risk_index ?? -1)
+            : -1;
+        const rb =
+          b.top_climate_risk?.availability_status === "AVAILABLE"
+            ? (b.top_climate_risk.risk_index ?? -1)
+            : -1;
+        return rb - ra;
+      }
+      if (matrixLens === "PROXY") {
+        return b.proxy_share_pct - a.proxy_share_pct;
+      }
+      return (b.per_capita_tco2e ?? -1) - (a.per_capita_tco2e ?? -1);
+    });
+  }, [municipalities, matrixLens]);
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -186,278 +288,483 @@ export function CitySelectorClient({
           return mult * a.name.localeCompare(b.name, "pt-BR");
         case "population":
           return mult * (a.population - b.population);
-        case "emissions":
+        case "emissions": {
+          if (a.total_tco2e === null && b.total_tco2e === null) return 0;
+          if (a.total_tco2e === null) return 1;
+          if (b.total_tco2e === null) return -1;
           return mult * (a.total_tco2e - b.total_tco2e);
-        case "per_capita":
+        }
+        case "per_capita": {
+          if (a.per_capita_tco2e === null && b.per_capita_tco2e === null)
+            return 0;
+          if (a.per_capita_tco2e === null) return 1;
+          if (b.per_capita_tco2e === null) return -1;
           return mult * (a.per_capita_tco2e - b.per_capita_tco2e);
+        }
         case "proxy":
           return mult * (a.proxy_share_pct - b.proxy_share_pct);
-        case "risk":
-          return (
-            mult *
-            ((a.top_climate_risk?.risk_index ?? 0) -
-              (b.top_climate_risk?.risk_index ?? 0))
-          );
+        case "risk": {
+          const ra =
+            a.top_climate_risk?.availability_status === "AVAILABLE"
+              ? a.top_climate_risk.risk_index
+              : null;
+          const rb =
+            b.top_climate_risk?.availability_status === "AVAILABLE"
+              ? b.top_climate_risk.risk_index
+              : null;
+          if (ra === null && rb === null) return 0;
+          if (ra === null) return 1;
+          if (rb === null) return -1;
+          return mult * (ra - rb);
+        }
       }
     });
   }, [municipalities, query, riskFilter, sortField, sortDir]);
 
   const renderSortIcon = (field: SortField) => {
     if (sortField !== field) {
-      return <ArrowUpDown className="h-3.5 w-3.5 text-slate-400" />;
+      return <ArrowUpDown className="h-3.5 w-3.5 text-[#a8a29e]" />;
     }
     return sortDir === "asc" ? (
-      <ArrowUp className="h-3.5 w-3.5 text-emerald-700" />
+      <ArrowUp className="h-3.5 w-3.5 text-[#1b4332]" />
     ) : (
-      <ArrowDown className="h-3.5 w-3.5 text-emerald-700" />
+      <ArrowDown className="h-3.5 w-3.5 text-[#1b4332]" />
     );
   };
 
   return (
-    <div className="space-y-8">
-      {/* 1. Paraná Statewide KPI Rollup */}
-      <section aria-label="Paraná Statewide Overview" className="space-y-4">
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {/* Total Statewide GHG */}
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-wider text-slate-500">
-              <span>Paraná Total GHG (2025)</span>
-              <TrendingUp className="h-4 w-4 text-emerald-600" />
+    <div className="space-y-10">
+      {/* 1. Editorial Ledger KPI Strip */}
+      <section aria-label="Paraná Statewide Overview" className="space-y-6">
+        <div className="grid border border-[#d6d0c4] bg-[#fcfaf5] md:grid-cols-3 md:divide-x md:divide-[#d6d0c4]">
+          {/* KPI 1: Total GHG */}
+          <div className="border-b border-[#d6d0c4] p-6 md:border-b-0">
+            <div className="flex items-center justify-between font-mono text-[11px] uppercase tracking-wider text-[#57534e]">
+              <span>01 · Paraná Total GHG (2025)</span>
+              {statewide.partialCityCount > 0 && (
+                <CoverageBadge status="PARTIAL" />
+              )}
             </div>
-            <div className="mt-2 text-2xl font-bold tabular-nums text-slate-900">
-              {formatNumber(statewide.totalEmissions, 0)}{" "}
-              <span className="text-xs font-normal text-slate-500">tCO₂e</span>
+            <div className="mt-3 flex items-baseline gap-2">
+              <span className="font-serif text-3xl font-normal tracking-tight tabular-nums text-[#171717] sm:text-4xl">
+                {formatNumber(statewide.totalEmissions / 1_000_000, 2)}M
+              </span>
+              <span className="font-mono text-xs text-[#57534e]">tCO₂e</span>
             </div>
-            <p className="mt-1 text-xs text-slate-600">
-              Statewide avg:{" "}
-              <strong className="font-mono text-slate-800">
+            <p className="mt-2 text-xs leading-relaxed text-[#57534e]">
+              <strong className="font-mono font-medium text-[#171717]">
                 {formatNumber(statewide.perCapitaAvg, 2)} tCO₂e/hab
               </strong>{" "}
-              across {formatNumber(statewide.totalPopulation)} residents (
-              {municipalities.length} cities)
+              across {formatNumber(statewide.totalPopulation)} residents.{" "}
+              <span className="text-[#b45309]">
+                {statewide.partialCityCount}/{municipalities.length} cities
+                missing Scope 2 electricity.
+              </span>
             </p>
           </div>
 
-          {/* Statewide Data Provenance */}
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-wider text-slate-500">
-              <span>Statewide Provenance Mix</span>
-              <Database className="h-4 w-4 text-amber-600" />
+          {/* KPI 2: Origin Mix */}
+          <div className="border-b border-[#d6d0c4] p-6 md:border-b-0">
+            <div className="font-mono text-[11px] uppercase tracking-wider text-[#57534e]">
+              02 · Statewide Origin Mix
             </div>
-            <div className="mt-2 flex items-baseline gap-3">
-              <span className="text-2xl font-bold tabular-nums text-amber-700">
-                {formatNumber(statewide.t3SharePct, 1)}%{" "}
-                <span className="text-xs font-normal text-slate-500">
-                  T3 Proxy
+            <div className="mt-3 flex items-baseline gap-4">
+              <div>
+                <span className="font-serif text-3xl font-normal tracking-tight tabular-nums text-[#b45309] sm:text-4xl">
+                  {formatNumber(statewide.proxySharePct, 1)}%
                 </span>
-              </span>
-              <span className="text-lg font-bold tabular-nums text-sky-700">
-                {formatNumber(statewide.t2SharePct, 1)}%{" "}
-                <span className="text-xs font-normal text-slate-500">
-                  T2 Modeled
+                <span className="ml-1.5 font-mono text-[11px] uppercase text-[#57534e]">
+                  Proxy
                 </span>
-              </span>
+              </div>
+              <div>
+                <span className="font-serif text-2xl font-normal tracking-tight tabular-nums text-[#1d4ed8]">
+                  {formatNumber(statewide.modeledSharePct, 1)}%
+                </span>
+                <span className="ml-1.5 font-mono text-[11px] uppercase text-[#57534e]">
+                  Modeled
+                </span>
+              </div>
             </div>
-            <div className="mt-2.5 flex h-2.5 w-full overflow-hidden rounded-full bg-slate-100">
+            <div className="mt-3 flex h-2 w-full overflow-hidden bg-[#e7e2d8]">
               <div
-                style={{ width: `${statewide.t2SharePct}%` }}
-                className="bg-sky-500"
-                title={`T2 Modeled: ${formatNumber(statewide.t2SharePct, 1)}%`}
+                style={{ width: `${statewide.modeledSharePct}%` }}
+                className="bg-[#1d4ed8]"
+                title={`Origin Modeled: ${formatNumber(statewide.modeledSharePct, 1)}%`}
               />
               <div
-                style={{ width: `${statewide.t3SharePct}%` }}
-                className="bg-amber-400"
-                title={`T3 Proxy: ${formatNumber(statewide.t3SharePct, 1)}%`}
+                style={{ width: `${statewide.proxySharePct}%` }}
+                className="bg-[#b45309]"
+                title={`Origin Proxy: ${formatNumber(statewide.proxySharePct, 1)}%`}
               />
             </div>
-            <p className="mt-1.5 text-[11px] text-slate-500">
-              0.0% T1_LOCAL verified in public baseline; local overrides run
-              client-side per city.
+            <p className="mt-2 text-xs text-[#57534e]">
+              <strong className="font-mono font-medium text-[#171717]">
+                0.0%
+              </strong>{" "}
+              Local origin in public baseline.
             </p>
           </div>
 
-          {/* Climate Vulnerability Exposure */}
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:col-span-2 lg:col-span-1">
-            <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-wider text-slate-500">
-              <span>High / Very High Climate Risk</span>
-              <ShieldAlert className="h-4 w-4 text-orange-600" />
+          {/* KPI 3: Climate Risk */}
+          <div className="p-6">
+            <div className="font-mono text-[11px] uppercase tracking-wider text-[#57534e]">
+              03 · High / Very High Climate Risk
             </div>
-            <div className="mt-2 text-2xl font-bold tabular-nums text-orange-700">
-              {statewide.highRiskCount}{" "}
-              <span className="text-sm font-semibold text-slate-500">
-                / {municipalities.length} cities (
+            <div className="mt-3 flex items-baseline gap-2">
+              <span className="font-serif text-3xl font-normal tracking-tight tabular-nums text-[#9a3412] sm:text-4xl">
+                {statewide.highRiskCount}
+              </span>
+              <span className="font-mono text-xs text-[#57534e]">
+                / {statewide.availableRiskCities} available (
                 {formatNumber(statewide.highRiskPct, 1)}%)
               </span>
             </div>
-            <p className="mt-1 text-xs text-slate-600">
-              Municipalities with at least one{" "}
-              <strong className="text-slate-800">HIGH</strong> or{" "}
-              <strong className="text-slate-800">VERY_HIGH</strong> AdaptaBrasil
-              MCTI risk index.
+            <p className="mt-2 text-xs leading-relaxed text-[#57534e]">
+              Cities with at least one{" "}
+              <strong className="font-semibold text-[#171717]">HIGH</strong> or{" "}
+              <strong className="font-semibold text-[#171717]">
+                VERY_HIGH
+              </strong>{" "}
+              AdaptaBrasil MCTI risk index.
             </p>
           </div>
         </div>
 
-        {/* Statewide Sector Composition */}
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="mb-3 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <BarChart3 className="h-4 w-4 text-slate-600" />
-              <h2 className="text-sm font-bold text-slate-900">
-                Paraná Statewide GPC Sector Composition (2025)
-              </h2>
+        {/* 2. Interactive 399-Municipality Atlas Matrix + Sector Composition */}
+        <div className="grid gap-6 lg:grid-cols-12">
+          {/* 399-City Waffle Matrix */}
+          <div className="border border-[#d6d0c4] bg-[#fcfaf5] p-5 lg:col-span-7">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#e7e2d8] pb-3">
+              <div>
+                <h2 className="font-serif text-lg font-medium text-[#171717]">
+                  The 399-Municipality Atlas
+                </h2>
+                <p className="text-xs text-[#57534e]">
+                  One cell per municipality, sorted high-to-low. Hover to
+                  inspect, click to open diagnostic.
+                </p>
+              </div>
+              <div className="flex border border-[#d6d0c4] bg-[#f5f2eb] p-0.5 font-mono text-[11px]">
+                {(
+                  [
+                    { key: "RISK", label: "Risk" },
+                    { key: "PROXY", label: "Proxy %" },
+                    { key: "PER_CAPITA", label: "Per-Capita" },
+                  ] as const
+                ).map((tab) => (
+                  <button
+                    key={tab.key}
+                    type="button"
+                    onClick={() => setMatrixLens(tab.key)}
+                    className={`px-2.5 py-1 transition ${
+                      matrixLens === tab.key
+                        ? "bg-[#171717] text-[#fcfaf5]"
+                        : "text-[#57534e] hover:text-[#171717]"
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
             </div>
-            <span className="text-xs text-slate-500">
-              Aggregated across all {municipalities.length} municipalities
-            </span>
+
+            {/* Matrix Grid */}
+            <div
+              className="mt-4 grid gap-1"
+              style={{
+                gridTemplateColumns: "repeat(auto-fill, minmax(12px, 1fr))",
+              }}
+              onMouseLeave={() => setHoveredCity(null)}
+            >
+              {matrixCities.map((city) => (
+                <button
+                  key={city.ibge_code}
+                  type="button"
+                  onMouseEnter={() => setHoveredCity(city)}
+                  onFocus={() => setHoveredCity(city)}
+                  onClick={() => router.push(`/city/${city.ibge_code}`)}
+                  aria-label={`${city.name} (${city.ibge_code})`}
+                  className={`h-3 w-full transition-transform hover:z-10 hover:scale-150 hover:ring-1 hover:ring-[#171717] focus:outline-none focus:ring-1 focus:ring-[#171717] ${getTileColor(
+                    city,
+                    matrixLens
+                  )}`}
+                />
+              ))}
+            </div>
+
+            {/* Readout & Legend Footer */}
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-[#e7e2d8] pt-3 text-xs">
+              {hoveredCity ? (
+                <div className="flex flex-wrap items-center gap-3 font-mono text-[11px]">
+                  <span className="font-sans text-xs font-semibold text-[#171717]">
+                    {hoveredCity.name}
+                  </span>
+                  <span className="text-[#57534e]">
+                    {hoveredCity.ibge_code}
+                  </span>
+                  <span className="text-[#171717]">
+                    {hoveredCity.total_tco2e !== null
+                      ? `${formatNumber(hoveredCity.total_tco2e, 0)} tCO₂e`
+                      : "N/A"}
+                  </span>
+                  <span className="text-[#b45309]">
+                    {formatNumber(hoveredCity.proxy_share_pct, 0)}% Proxy
+                  </span>
+                  {hoveredCity.top_climate_risk?.availability_status ===
+                    "AVAILABLE" &&
+                    hoveredCity.top_climate_risk.risk_index !== null && (
+                      <span className="text-[#9a3412]">
+                        Risk{" "}
+                        {hoveredCity.top_climate_risk.risk_index.toFixed(2)}
+                      </span>
+                    )}
+                </div>
+              ) : (
+                <span className="font-mono text-[11px] text-[#78716c]">
+                  Hover any cell to inspect municipality metrics
+                </span>
+              )}
+
+              <div className="flex items-center gap-2 font-mono text-[10px] text-[#57534e]">
+                {matrixLens === "RISK" && (
+                  <>
+                    <span className="inline-flex items-center gap-1">
+                      <span className="h-2.5 w-2.5 bg-[#9a3412]" /> Very High
+                    </span>
+                    <span className="inline-flex items-center gap-1">
+                      <span className="h-2.5 w-2.5 bg-[#d97706]" /> High
+                    </span>
+                    <span className="inline-flex items-center gap-1">
+                      <span className="h-2.5 w-2.5 bg-[#eab308]" /> Med
+                    </span>
+                    <span className="inline-flex items-center gap-1">
+                      <span className="h-2.5 w-2.5 bg-[#1b4332]/75" /> Low
+                    </span>
+                  </>
+                )}
+                {matrixLens === "PROXY" && (
+                  <>
+                    <span className="inline-flex items-center gap-1">
+                      <span className="h-2.5 w-2.5 bg-[#b45309]" /> ≥75% Proxy
+                    </span>
+                    <span className="inline-flex items-center gap-1">
+                      <span className="h-2.5 w-2.5 bg-[#d97706]" /> 50–74%
+                    </span>
+                    <span className="inline-flex items-center gap-1">
+                      <span className="h-2.5 w-2.5 bg-[#0284c7]" /> 25–49%
+                    </span>
+                    <span className="inline-flex items-center gap-1">
+                      <span className="h-2.5 w-2.5 bg-[#1d4ed8]" /> &lt;25%
+                    </span>
+                  </>
+                )}
+                {matrixLens === "PER_CAPITA" && (
+                  <>
+                    <span className="inline-flex items-center gap-1">
+                      <span className="h-2.5 w-2.5 bg-[#7c2d12]" /> ≥20 t
+                    </span>
+                    <span className="inline-flex items-center gap-1">
+                      <span className="h-2.5 w-2.5 bg-[#b45309]" /> 10–19 t
+                    </span>
+                    <span className="inline-flex items-center gap-1">
+                      <span className="h-2.5 w-2.5 bg-[#0f766e]" /> 4–9 t
+                    </span>
+                    <span className="inline-flex items-center gap-1">
+                      <span className="h-2.5 w-2.5 bg-[#1b4332]/50" /> &lt;4 t
+                    </span>
+                  </>
+                )}
+              </div>
+            </div>
           </div>
 
-          <div className="grid gap-3 md:grid-cols-5">
-            {GPC_SECTOR_CODES.map((code) => {
-              const val = statewide.sectorTotals[code];
-              const share =
-                statewide.totalEmissions !== 0
-                  ? (val / statewide.totalEmissions) * 100
-                  : 0;
-              const widthPct = Math.min(
-                100,
-                (Math.abs(val) / statewide.maxAbsSector) * 100
-              );
+          {/* Statewide GPC Sector Composition */}
+          <div className="flex flex-col justify-between border border-[#d6d0c4] bg-[#fcfaf5] p-5 lg:col-span-5">
+            <div>
+              <div className="border-b border-[#e7e2d8] pb-3">
+                <h2 className="font-serif text-lg font-medium text-[#171717]">
+                  GPC Sector Composition
+                </h2>
+                <p className="text-xs text-[#57534e]">
+                  2025 partial coverage · Stationary Energy excludes Scope 2
+                  electricity
+                </p>
+              </div>
 
-              return (
-                <div
-                  key={code}
-                  className="rounded-xl border border-slate-100 bg-slate-50/80 p-3"
-                >
-                  <div className="text-[11px] font-semibold text-slate-600">
-                    {SECTOR_LABELS[code]}
-                  </div>
-                  <div className="mt-1 font-mono text-sm font-bold tabular-nums text-slate-900">
-                    {formatNumber(val / 1_000_000, 2)}M{" "}
-                    <span className="text-[10px] font-normal text-slate-500">
-                      tCO₂e
-                    </span>
-                  </div>
-                  <div className="mt-1.5 h-2 w-full overflow-hidden rounded-full bg-slate-200">
-                    <div
-                      style={{ width: `${Math.max(widthPct, val !== 0 ? 3 : 0)}%` }}
-                      className={`h-full rounded-full ${SECTOR_BAR_COLORS[code]}`}
-                    />
-                  </div>
-                  <div className="mt-1 font-mono text-[11px] text-slate-500">
-                    {formatNumber(share, 1)}% of PR
-                  </div>
-                </div>
-              );
-            })}
+              <div className="mt-4 space-y-3.5">
+                {GPC_SECTOR_CODES.map((code) => {
+                  const val = statewide.sectorTotals[code];
+                  const share =
+                    statewide.totalEmissions !== 0
+                      ? (val / statewide.totalEmissions) * 100
+                      : 0;
+                  const widthPct = Math.min(
+                    100,
+                    (Math.abs(val) / statewide.maxAbsSector) * 100
+                  );
+
+                  return (
+                    <div key={code} className="space-y-1">
+                      <div className="flex items-baseline justify-between text-xs">
+                        <span className="font-medium text-[#171717]">
+                          {SECTOR_LABELS[code]}
+                        </span>
+                        <span className="font-mono text-[11px] tabular-nums text-[#57534e]">
+                          <strong className="font-semibold text-[#171717]">
+                            {formatNumber(val / 1_000_000, 2)}M
+                          </strong>{" "}
+                          tCO₂e ({formatNumber(share, 1)}%)
+                        </span>
+                      </div>
+                      <div className="h-2 w-full bg-[#e7e2d8]">
+                        <div
+                          style={{
+                            width: `${Math.max(widthPct, val !== 0 ? 2 : 0)}%`,
+                          }}
+                          className={`h-full ${SECTOR_BAR_COLORS[code]}`}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="mt-5 border-t border-[#e7e2d8] pt-3 font-mono text-[11px] text-[#57534e]">
+              Scope 2 blind spot:{" "}
+              <span className="text-[#b45309]">
+                grid_electricity is null across all 399 SEEG baselines
+              </span>
+            </div>
           </div>
         </div>
       </section>
 
-      {/* 2. Pinned Reference Benchmark Card for Maringá (4115200) */}
-      {maringa && (
-        <section className="rounded-2xl border border-emerald-200 bg-gradient-to-br from-emerald-50/80 via-white to-slate-50 p-6 shadow-sm">
-          <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
-            <div className="space-y-1.5">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="inline-flex items-center gap-1 rounded-md bg-emerald-700 px-2 py-0.5 text-xs font-semibold text-white">
-                  Pinned Reference Benchmark
-                </span>
-                <span className="font-mono text-xs text-slate-500">
-                  IBGE {maringa.ibge_code}
-                </span>
-                <ConfidenceBadge tier={maringa.primary_confidence_tier} />
-              </div>
-              <h2 className="text-xl font-bold text-slate-900">
-                {maringa.name} — {maringa.state}
-              </h2>
-              <p className="text-sm text-slate-600">
-                Population {formatNumber(maringa.population)} (IBGE Censo{" "}
-                {maringa.population_year}) • Dominant sector:{" "}
-                <span className="font-medium text-slate-800">
-                  {SECTOR_LABELS[maringa.dominant_sector]}
-                </span>
-              </p>
+      {/* 3. Reference Benchmark & State Extremes Strip */}
+      <section
+        aria-label="Reference Benchmarks"
+        className="grid border border-[#d6d0c4] bg-[#fcfaf5] md:grid-cols-3 md:divide-x md:divide-[#d6d0c4]"
+      >
+        {/* Pinned Maringá Reference */}
+        {maringa && (
+          <div className="border-b border-[#d6d0c4] bg-[#f0f4ef] p-5 md:border-b-0">
+            <div className="flex items-center justify-between">
+              <span className="font-mono text-[10px] font-semibold uppercase tracking-widest text-[#1b4332]">
+                Pinned Benchmark · {maringa.ibge_code}
+              </span>
+              <CoverageBadge status={maringa.coverage_status} />
             </div>
-
-            <div className="flex flex-wrap items-center gap-6">
-              <div>
-                <div className="text-xs font-medium uppercase tracking-wider text-slate-500">
-                  Total Baseline
-                </div>
-                <div className="text-xl font-bold tabular-nums text-slate-900">
-                  {formatNumber(maringa.total_tco2e, 0)}{" "}
-                  <span className="text-xs font-normal text-slate-500">
-                    tCO₂e
-                  </span>
-                </div>
-                <div className="text-xs text-slate-500">
-                  {formatNumber(maringa.per_capita_tco2e, 2)} tCO₂e/hab
-                </div>
-              </div>
-
-              <div>
-                <div className="text-xs font-medium uppercase tracking-wider text-slate-500">
-                  Proxy vs. Modeled
-                </div>
-                <div className="text-xl font-bold tabular-nums text-amber-700">
-                  {formatNumber(maringa.proxy_share_pct, 1)}%{" "}
-                  <span className="text-xs font-normal text-slate-500">
-                    Proxy
-                  </span>
-                </div>
-                <div className="text-xs text-sky-700">
-                  {formatNumber(maringa.modeled_share_pct, 1)}% Modeled
-                </div>
-              </div>
-
-              <Link
-                href={`/city/${maringa.ibge_code}`}
-                className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
-              >
-                Open Diagnostic
-                <ArrowRight className="h-4 w-4" />
-              </Link>
-            </div>
+            <h3 className="mt-2 font-serif text-xl font-medium text-[#171717]">
+              {maringa.name}, {maringa.state}
+            </h3>
+            <p className="mt-1 text-xs text-[#57534e]">
+              Pop. {formatNumber(maringa.population)} ·{" "}
+              <span className="font-mono text-[#171717]">
+                {maringa.total_tco2e !== null
+                  ? `${formatNumber(maringa.total_tco2e, 0)} tCO₂e`
+                  : "N/A"}
+              </span>{" "}
+              ({formatNumber(maringa.proxy_share_pct, 1)}% Proxy)
+            </p>
+            <Link
+              href={`/city/${maringa.ibge_code}`}
+              className="mt-4 inline-flex items-center gap-1.5 font-mono text-xs font-semibold text-[#1b4332] underline-offset-4 hover:underline"
+            >
+              Open diagnostic
+              <ArrowRight className="h-3.5 w-3.5" />
+            </Link>
           </div>
-        </section>
-      )}
+        )}
 
-      {/* 3. Interactive All-Cities Explorer (All 399 Municipalities) */}
+        {/* Highest Total Emissions */}
+        {statewide.topEmitter && (
+          <div className="border-b border-[#d6d0c4] p-5 md:border-b-0">
+            <div className="font-mono text-[10px] uppercase tracking-widest text-[#57534e]">
+              Highest Total Emissions · {statewide.topEmitter.ibge_code}
+            </div>
+            <h3 className="mt-2 font-serif text-xl font-medium text-[#171717]">
+              {statewide.topEmitter.name}, {statewide.topEmitter.state}
+            </h3>
+            <p className="mt-1 text-xs text-[#57534e]">
+              <span className="font-mono font-semibold text-[#171717]">
+                {statewide.topEmitter.total_tco2e !== null
+                  ? `${formatNumber(statewide.topEmitter.total_tco2e, 0)} tCO₂e`
+                  : "N/A"}
+              </span>{" "}
+              · Pop. {formatNumber(statewide.topEmitter.population)}
+            </p>
+            <Link
+              href={`/city/${statewide.topEmitter.ibge_code}`}
+              className="mt-4 inline-flex items-center gap-1.5 font-mono text-xs font-semibold text-[#171717] underline-offset-4 hover:underline"
+            >
+              Inspect baseline
+              <ArrowRight className="h-3.5 w-3.5" />
+            </Link>
+          </div>
+        )}
+
+        {/* Highest Per-Capita Emissions */}
+        {statewide.topPerCapita && (
+          <div className="p-5">
+            <div className="font-mono text-[10px] uppercase tracking-widest text-[#57534e]">
+              Highest Per-Capita · {statewide.topPerCapita.ibge_code}
+            </div>
+            <h3 className="mt-2 font-serif text-xl font-medium text-[#171717]">
+              {statewide.topPerCapita.name}, {statewide.topPerCapita.state}
+            </h3>
+            <p className="mt-1 text-xs text-[#57534e]">
+              <span className="font-mono font-semibold text-[#171717]">
+                {statewide.topPerCapita.per_capita_tco2e !== null
+                  ? `${formatNumber(statewide.topPerCapita.per_capita_tco2e, 2)} tCO₂e/hab`
+                  : "N/A"}
+              </span>{" "}
+              · Pop. {formatNumber(statewide.topPerCapita.population)}
+            </p>
+            <Link
+              href={`/city/${statewide.topPerCapita.ibge_code}`}
+              className="mt-4 inline-flex items-center gap-1.5 font-mono text-xs font-semibold text-[#171717] underline-offset-4 hover:underline"
+            >
+              Inspect baseline
+              <ArrowRight className="h-3.5 w-3.5" />
+            </Link>
+          </div>
+        )}
+      </section>
+
+      {/* 4. Interactive All-Cities Directory (All 399 Municipalities) */}
       <section className="space-y-4">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="relative flex-1">
-            <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[#78716c]" />
             <input
               type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search all 399 Paraná municipalities by name (e.g. Maringa, Curitiba, Londrina) or 7-digit IBGE code..."
+              placeholder="Search all 399 Paraná municipalities by name (e.g. Maringá, Curitiba) or 7-digit IBGE code..."
               aria-label="Search municipalities by name or IBGE code"
-              className="w-full rounded-xl border border-slate-300 bg-white py-2.5 pl-10 pr-4 text-sm text-slate-900 shadow-sm placeholder:text-slate-400 focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-600/20"
+              className="w-full border border-[#d6d0c4] bg-[#fcfaf5] py-2.5 pl-10 pr-4 text-sm text-[#171717] placeholder:text-[#a8a29e] focus:border-[#1b4332] focus:outline-none"
             />
           </div>
 
-          {/* Risk Filter Pills */}
-          <div className="flex flex-wrap items-center gap-1.5">
+          <div className="flex flex-wrap items-center gap-1">
             {(
               [
-                {
-                  key: "ALL",
-                  label: `All (${municipalities.length})`,
-                },
-                {
-                  key: "HIGH",
-                  label: `HIGH Risk (${statewide.highRiskCount})`,
-                },
+                { key: "ALL", label: `All (${municipalities.length})` },
+                { key: "HIGH", label: `High Risk (${statewide.highRiskCount})` },
                 {
                   key: "MEDIUM",
-                  label: `MEDIUM Risk (${statewide.mediumRiskCount})`,
+                  label: `Medium (${statewide.mediumRiskCount})`,
                 },
-                {
-                  key: "LOW",
-                  label: `LOW Risk (${statewide.lowRiskCount})`,
-                },
+                { key: "LOW", label: `Low (${statewide.lowRiskCount})` },
+                ...(statewide.unavailableRiskCount > 0
+                  ? [
+                      {
+                        key: "UNAVAILABLE" as const,
+                        label: `Unavailable (${statewide.unavailableRiskCount})`,
+                      },
+                    ]
+                  : []),
               ] as const
             ).map((pill) => {
               const active = riskFilter === pill.key;
@@ -466,10 +773,10 @@ export function CitySelectorClient({
                   key={pill.key}
                   type="button"
                   onClick={() => setRiskFilter(pill.key)}
-                  className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${
+                  className={`border px-3 py-2 font-mono text-[11px] font-medium transition ${
                     active
-                      ? "border-emerald-700 bg-emerald-700 text-white shadow-sm"
-                      : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                      ? "border-[#171717] bg-[#171717] text-[#fcfaf5]"
+                      : "border-[#d6d0c4] bg-[#fcfaf5] text-[#57534e] hover:border-[#171717] hover:text-[#171717]"
                   }`}
                 >
                   {pill.label}
@@ -479,39 +786,60 @@ export function CitySelectorClient({
           </div>
         </div>
 
-        <div className="flex items-center justify-between text-xs text-slate-500">
+        {/* Quick-Jump Major Cities */}
+        {featuredCities.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="font-mono text-[10px] uppercase tracking-wider text-[#78716c]">
+              Quick jump:
+            </span>
+            {featuredCities.map((c) => (
+              <Link
+                key={c.ibge_code}
+                href={`/city/${c.ibge_code}`}
+                className="border border-[#d6d0c4] bg-[#fcfaf5] px-2.5 py-1 font-mono text-[11px] text-[#171717] transition hover:border-[#1b4332] hover:bg-[#f0f4ef]"
+              >
+                {c.name}
+              </Link>
+            ))}
+          </div>
+        )}
+
+        <div className="flex flex-wrap items-center justify-between gap-2 font-mono text-[11px] text-[#57534e]">
           <span>
             Showing{" "}
-            <strong className="text-slate-800">
+            <strong className="text-[#171717]">
               {filteredAndSorted.length}
             </strong>{" "}
-            of <strong className="text-slate-800">{municipalities.length}</strong>{" "}
-            Paraná municipalities
+            of <strong className="text-[#171717]">{municipalities.length}</strong>{" "}
+            municipalities
           </span>
-          <span>Click any row to open its full diagnostic &amp; override workbench</span>
+          <span>
+            Select any row to open its diagnostic &amp; boundary-aware override
+            workbench
+          </span>
         </div>
 
         {filteredAndSorted.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-slate-300 bg-white p-10 text-center">
-            <Building2 className="mx-auto h-8 w-8 text-slate-400" />
-            <p className="mt-2 text-sm font-medium text-slate-700">
+          <div className="border border-dashed border-[#d6d0c4] bg-[#fcfaf5] p-10 text-center">
+            <Building2 className="mx-auto h-7 w-7 text-[#a8a29e]" />
+            <p className="mt-2 text-sm font-medium text-[#171717]">
               No municipalities matched &ldquo;{query}&rdquo;
             </p>
-            <p className="mt-1 text-xs text-slate-500">
+            <p className="mt-1 text-xs text-[#57534e]">
               Try clearing the risk filter or searching by city name without
               accents.
             </p>
           </div>
         ) : (
-          <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="overflow-x-auto border border-[#d6d0c4] bg-[#fcfaf5]">
             <table className="w-full border-collapse text-left text-sm">
-              <thead className="border-b border-slate-200 bg-slate-50 text-xs font-semibold uppercase tracking-wider text-slate-600">
+              <thead className="border-b border-[#d6d0c4] bg-[#f5f2eb] font-mono text-[11px] font-medium uppercase tracking-wider text-[#57534e]">
                 <tr>
                   <th className="px-4 py-3">
                     <button
                       type="button"
                       onClick={() => handleSort("name")}
-                      className="inline-flex items-center gap-1.5 hover:text-slate-900"
+                      className="inline-flex items-center gap-1.5 hover:text-[#171717]"
                     >
                       Municipality &amp; IBGE
                       {renderSortIcon("name")}
@@ -521,7 +849,7 @@ export function CitySelectorClient({
                     <button
                       type="button"
                       onClick={() => handleSort("population")}
-                      className="inline-flex items-center justify-end gap-1.5 hover:text-slate-900"
+                      className="inline-flex items-center justify-end gap-1.5 hover:text-[#171717]"
                     >
                       Population
                       {renderSortIcon("population")}
@@ -531,7 +859,7 @@ export function CitySelectorClient({
                     <button
                       type="button"
                       onClick={() => handleSort("emissions")}
-                      className="inline-flex items-center justify-end gap-1.5 hover:text-slate-900"
+                      className="inline-flex items-center justify-end gap-1.5 hover:text-[#171717]"
                     >
                       Total (tCO₂e)
                       {renderSortIcon("emissions")}
@@ -541,19 +869,20 @@ export function CitySelectorClient({
                     <button
                       type="button"
                       onClick={() => handleSort("per_capita")}
-                      className="inline-flex items-center justify-end gap-1.5 hover:text-slate-900"
+                      className="inline-flex items-center justify-end gap-1.5 hover:text-[#171717]"
                     >
                       Per-Capita
                       {renderSortIcon("per_capita")}
                     </button>
                   </th>
+                  <th className="px-4 py-3">Sector Mix</th>
                   <th className="px-4 py-3">
                     <button
                       type="button"
                       onClick={() => handleSort("proxy")}
-                      className="inline-flex items-center gap-1.5 hover:text-slate-900"
+                      className="inline-flex items-center gap-1.5 hover:text-[#171717]"
                     >
-                      Provenance Mix
+                      Origin Mix
                       {renderSortIcon("proxy")}
                     </button>
                   </th>
@@ -561,7 +890,7 @@ export function CitySelectorClient({
                     <button
                       type="button"
                       onClick={() => handleSort("risk")}
-                      className="inline-flex items-center gap-1.5 hover:text-slate-900"
+                      className="inline-flex items-center gap-1.5 hover:text-[#171717]"
                     >
                       Top AdaptaBrasil Risk
                       {renderSortIcon("risk")}
@@ -569,61 +898,137 @@ export function CitySelectorClient({
                   </th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
-                {filteredAndSorted.map((city) => (
-                  <tr
-                    key={city.ibge_code}
-                    onClick={() => router.push(`/city/${city.ibge_code}`)}
-                    className="cursor-pointer transition hover:bg-emerald-50/40"
-                  >
-                    <td className="px-4 py-3">
-                      <Link
-                        href={`/city/${city.ibge_code}`}
-                        onClick={(e) => e.stopPropagation()}
-                        className="font-semibold text-slate-900 hover:text-emerald-700"
-                      >
-                        {city.name} — {city.state}
-                      </Link>
-                      <div className="font-mono text-xs text-slate-500">
-                        {city.ibge_code}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-right font-mono text-xs tabular-nums text-slate-700">
-                      {formatNumber(city.population)}
-                    </td>
-                    <td className="px-4 py-3 text-right font-mono font-semibold tabular-nums text-slate-900">
-                      {formatNumber(city.total_tco2e, 0)}
-                    </td>
-                    <td className="px-4 py-3 text-right font-mono text-xs tabular-nums text-slate-600">
-                      {formatNumber(city.per_capita_tco2e, 2)}
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2 text-xs">
-                        <span className="font-mono font-medium text-sky-700">
-                          {formatNumber(city.modeled_share_pct, 0)}% T2
-                        </span>
-                        <span className="text-slate-300">/</span>
-                        <span className="font-mono font-medium text-amber-700">
-                          {formatNumber(city.proxy_share_pct, 0)}% T3
-                        </span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      {city.top_climate_risk ? (
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-mono text-xs font-bold tabular-nums text-slate-800">
-                            {city.top_climate_risk.risk_index.toFixed(2)}
-                          </span>
-                          <RiskClassBadge
-                            riskClass={city.top_climate_risk.risk_class}
-                          />
+              <tbody className="divide-y divide-[#e7e2d8]">
+                {filteredAndSorted.map((city) => {
+                  const absSectorSum = city.sector_totals
+                    ? GPC_SECTOR_CODES.reduce(
+                        (acc, code) =>
+                          acc + Math.abs(city.sector_totals?.[code] ?? 0),
+                        0
+                      )
+                    : 0;
+
+                  return (
+                    <tr
+                      key={city.ibge_code}
+                      onClick={() => router.push(`/city/${city.ibge_code}`)}
+                      className="cursor-pointer transition hover:bg-[#f0f4ef]/70"
+                    >
+                      <td className="px-4 py-3">
+                        <Link
+                          href={`/city/${city.ibge_code}`}
+                          onClick={(e) => e.stopPropagation()}
+                          className="font-medium text-[#171717] hover:text-[#1b4332]"
+                        >
+                          {city.name}
+                        </Link>
+                        <div className="font-mono text-[11px] text-[#78716c]">
+                          {city.ibge_code} · {city.state}
                         </div>
-                      ) : (
-                        <span className="text-xs text-slate-400">—</span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
+                      </td>
+                      <td className="px-4 py-3 text-right font-mono text-xs tabular-nums text-[#57534e]">
+                        {formatNumber(city.population)}
+                      </td>
+                      <td className="px-4 py-3 text-right font-mono font-semibold tabular-nums text-[#171717]">
+                        {city.total_tco2e !== null ? (
+                          <div>
+                            {formatNumber(city.total_tco2e, 0)}
+                            {city.coverage_status === "PARTIAL" && (
+                              <span className="ml-1 text-[10px] font-normal text-[#b45309]">
+                                (partial)
+                              </span>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-xs font-normal text-[#78716c]">
+                            Data unavailable
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-right font-mono text-xs tabular-nums text-[#57534e]">
+                        {city.per_capita_tco2e !== null
+                          ? formatNumber(city.per_capita_tco2e, 2)
+                          : "Data unavailable"}
+                      </td>
+                      <td className="px-4 py-3">
+                        {absSectorSum > 0 && city.sector_totals ? (
+                          <div
+                            className="flex h-2 w-24 overflow-hidden bg-[#e7e2d8]"
+                            title={GPC_SECTOR_CODES.map(
+                              (c) =>
+                                `${SECTOR_LABELS[c]}: ${formatNumber(city.sector_totals?.[c] ?? 0, 0)} tCO₂e`
+                            ).join(" | ")}
+                          >
+                            {GPC_SECTOR_CODES.map((code) => {
+                              const val = Math.abs(
+                                city.sector_totals?.[code] ?? 0
+                              );
+                              const pct = (val / absSectorSum) * 100;
+                              if (pct <= 0) return null;
+                              return (
+                                <div
+                                  key={code}
+                                  style={{ width: `${pct}%` }}
+                                  className={SECTOR_BAR_COLORS[code]}
+                                />
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <span className="font-mono text-[11px] text-[#a8a29e]">
+                            —
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-1.5 font-mono text-[11px]">
+                            <span className="text-[#1d4ed8]">
+                              {formatNumber(city.modeled_share_pct, 0)}%M
+                            </span>
+                            <span className="text-[#d6d0c4]">/</span>
+                            <span className="text-[#b45309]">
+                              {formatNumber(city.proxy_share_pct, 0)}%P
+                            </span>
+                          </div>
+                          <div className="flex h-1 w-20 overflow-hidden bg-[#e7e2d8]">
+                            <div
+                              style={{ width: `${city.modeled_share_pct}%` }}
+                              className="bg-[#1d4ed8]"
+                            />
+                            <div
+                              style={{ width: `${city.proxy_share_pct}%` }}
+                              className="bg-[#b45309]"
+                            />
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        {city.top_climate_risk &&
+                        city.top_climate_risk.availability_status ===
+                          "AVAILABLE" &&
+                        city.top_climate_risk.risk_index !== null ? (
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-mono text-xs font-bold tabular-nums text-[#171717]">
+                              {city.top_climate_risk.risk_index.toFixed(2)}
+                            </span>
+                            <RiskClassBadge
+                              riskClass={city.top_climate_risk.risk_class}
+                              availabilityStatus={
+                                city.top_climate_risk.availability_status
+                              }
+                            />
+                          </div>
+                        ) : (
+                          <RiskClassBadge
+                            riskClass={null}
+                            availabilityStatus="UNAVAILABLE"
+                          />
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { Globe2, Layers, ShieldCheck } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 import { CityIndexManifest } from "../../data/schema/city";
 import { CitySelectorClient } from "@/components/CitySelectorClient";
 
@@ -14,73 +14,94 @@ export default function HomePage() {
   const manifest = loadIndexManifest();
 
   return (
-    <div className="min-h-screen bg-slate-50">
-      {/* Top Bar */}
-      <header className="border-b border-slate-200 bg-white">
-        <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
-          <div className="flex flex-col gap-6">
-            <div className="flex flex-wrap items-center gap-2 text-xs font-semibold uppercase tracking-wider text-emerald-700">
-              <Globe2 className="h-4 w-4" />
-              <span>Municipal Climate Lens • Paraná (399 Municipalities)</span>
-            </div>
+    <div className="min-h-screen bg-[#f5f2eb] text-[#171717]">
+      {/* Top Archival Masthead Bar */}
+      <div className="border-b border-[#d6d0c4] bg-[#fcfaf5]">
+        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-2 px-4 py-2.5 text-[11px] font-mono uppercase tracking-widest text-[#57534e] sm:px-6 lg:px-8">
+          <div className="flex items-center gap-2.5">
+            <span className="inline-block h-2 w-2 bg-[#1b4332]" />
+            <span className="font-semibold text-[#171717]">
+              Municipal Climate Lens
+            </span>
+            <span className="text-[#a8a29e]">/</span>
+            <span>Paraná, BR · {manifest.municipalities.length} Municipalities</span>
+          </div>
+          <div className="flex flex-wrap items-center gap-3 text-[10px]">
+            <span>SEEG Coleção 14.0</span>
+            <span className="text-[#a8a29e]">·</span>
+            <span>AdaptaBrasil MCTI</span>
+            <span className="text-[#a8a29e]">·</span>
+            <span>IBGE Censo 2022</span>
+            <span className="border border-[#d6d0c4] bg-[#f5f2eb] px-1.5 py-0.5 text-[#171717]">
+              v{manifest.schema_version}
+            </span>
+          </div>
+        </div>
+      </div>
 
-            <div className="max-w-3xl space-y-3">
-              <h1 className="text-3xl font-bold tracking-tight text-slate-900 sm:text-4xl">
-                Municipal GHG Baselines &amp; Data-Gap Explorer
+      {/* Editorial Hero */}
+      <header className="border-b border-[#d6d0c4] bg-[#fcfaf5]">
+        <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 sm:py-10 lg:px-8">
+          <div className="grid gap-6 lg:grid-cols-12 lg:items-end">
+            <div className="space-y-3 lg:col-span-8">
+              <h1 className="font-serif text-3xl font-normal tracking-tight text-[#171717] sm:text-5xl sm:leading-[1.08]">
+                Paraná Municipal GHG Baselines{" "}
+                <span className="italic text-[#57534e]">&amp; Data-Gap Ledger</span>
               </h1>
-              <p className="text-base leading-relaxed text-slate-600">
-                Most municipal climate dashboards hide whether an emission number
-                comes from a local utility meter or a national population proxy.{" "}
-                <strong className="font-semibold text-slate-900">
-                  Municipal Climate Lens
-                </strong>{" "}
-                combines official Brazilian datasets—
-                <span className="font-medium text-slate-800">
-                  SEEG Coleção 14.0
-                </span>
-                ,{" "}
-                <span className="font-medium text-slate-800">
-                  AdaptaBrasil MCTI
-                </span>
-                , and{" "}
-                <span className="font-medium text-slate-800">
-                  IBGE Censo 2022
-                </span>
-                —and tags every number with an explicit provenance tier and an
-                actionable checklist to close local data gaps.
+              <p className="max-w-2xl text-sm leading-relaxed text-[#57534e] sm:text-base">
+                An open diagnostic of municipal emissions and climate vulnerability
+                across all 399 cities in Paraná—separating{" "}
+                <strong className="font-semibold text-[#171717]">data origin</strong>{" "}
+                from{" "}
+                <strong className="font-semibold text-[#171717]">
+                  evidence verification
+                </strong>
+                , and exposing missing Scope 2 electricity explicitly instead of
+                coercing it to zero.
               </p>
             </div>
 
-            {/* Provenance Legend */}
-            <div className="flex flex-wrap gap-3 pt-1 text-xs">
-              <div className="inline-flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-emerald-900">
-                <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />
-                <span>
-                  <strong>T1_LOCAL</strong> — Verified municipal meter / fuel /
-                  landfill logs
-                </span>
-              </div>
-              <div className="inline-flex items-center gap-2 rounded-lg border border-sky-200 bg-sky-50 px-3 py-1.5 text-sky-900">
-                <Layers className="h-3.5 w-3.5 text-sky-600" />
-                <span>
-                  <strong>T2_MODELED</strong> — Spatially modeled (MapBiomas /
-                  AdaptaBrasil)
-                </span>
-              </div>
-              <div className="inline-flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-amber-900">
-                <Layers className="h-3.5 w-3.5 text-amber-600" />
-                <span>
-                  <strong>T3_PROXY</strong> — State/national top-down
-                  disaggregation
-                </span>
-              </div>
+            <div className="lg:col-span-4 lg:flex lg:justify-end">
+              <details className="group w-full border border-[#d6d0c4] bg-[#f5f2eb] text-xs lg:max-w-sm">
+                <summary className="flex cursor-pointer list-none items-center justify-between px-3.5 py-2.5 font-mono text-[11px] font-medium uppercase tracking-wider text-[#171717] transition hover:bg-[#ede8dc]">
+                  <span>How to read provenance</span>
+                  <ChevronDown className="h-3.5 w-3.5 text-[#57534e] transition-transform group-open:rotate-180" />
+                </summary>
+                <div className="space-y-2.5 border-t border-[#d6d0c4] bg-[#fcfaf5] p-3.5 text-xs text-[#57534e]">
+                  <div className="flex items-start gap-2">
+                    <span className="mt-1 h-2 w-2 shrink-0 bg-[#1b4332]" />
+                    <span>
+                      <strong className="text-[#171717]">LOCAL</strong> — Municipal
+                      utility, fuel, or weighbridge entry (requires evidence &amp;
+                      compatible boundary).
+                    </span>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <span className="mt-1 h-2 w-2 shrink-0 bg-[#1d4ed8]" />
+                    <span>
+                      <strong className="text-[#171717]">MODELED</strong> — Spatially
+                      modeled (MapBiomas / AdaptaBrasil).
+                    </span>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <span className="mt-1 h-2 w-2 shrink-0 bg-[#b45309]" />
+                    <span>
+                      <strong className="text-[#171717]">PROXY</strong> — State or
+                      national top-down disaggregation.
+                    </span>
+                  </div>
+                  <p className="border-t border-[#e7e2d8] pt-2 text-[11px] leading-snug text-[#78716c]">
+                    Data origin is distinct from IPCC methodological Tiers (1/2/3)
+                    and independent audit verification.
+                  </p>
+                </div>
+              </details>
             </div>
           </div>
         </div>
       </header>
 
-      {/* Main Selector */}
-      <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
+      <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
         <CitySelectorClient municipalities={manifest.municipalities} />
       </main>
     </div>

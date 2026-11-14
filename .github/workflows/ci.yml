@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  python-and-data-validation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+      - name: Validate sample city record (Maringá 4115200)
+        run: python3 data/schema/city_schema.py public/data/4115200.json
+      - name: Run Python ingestion & schema tests
+        run: python3 -m unittest scripts/test_build_city_data.py -v
+
+  web-checks-and-static-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+      - name: Install Node dependencies
+        run: npm ci
+      - name: TypeScript typecheck
+        run: npm run typecheck
+      - name: Run Vitest unit & contract tests
+        run: npm test
+      - name: Build static Next.js export
+        run: npm run build

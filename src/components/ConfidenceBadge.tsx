@@ -1,47 +1,117 @@
 "use client";
 
 import React from "react";
-import { ClimateRiskClass, ConfidenceTier } from "../../data/schema/city";
+import {
+  AvailabilityStatus,
+  ClimateRiskClass,
+  CoverageStatus,
+  DataOrigin,
+  VerificationStatus,
+} from "../../data/schema/city";
 
-const TIER_CONFIG: Record<
-  ConfidenceTier,
+const ORIGIN_CONFIG: Record<
+  DataOrigin | "MIXED",
   { label: string; shortLabel: string; classes: string; dotClass: string }
 > = {
-  T1_LOCAL: {
-    label: "T1 Local Verified",
-    shortLabel: "T1_LOCAL",
-    classes: "bg-emerald-50 text-emerald-800 border-emerald-200",
-    dotClass: "bg-emerald-500",
+  LOCAL: {
+    label: "Origin: Local",
+    shortLabel: "LOCAL",
+    classes: "bg-[#1b4332]/10 text-[#1b4332] border-[#1b4332]/30",
+    dotClass: "bg-[#1b4332]",
   },
-  T2_MODELED: {
-    label: "T2 Spatially Modeled",
-    shortLabel: "T2_MODELED",
-    classes: "bg-sky-50 text-sky-800 border-sky-200",
-    dotClass: "bg-sky-500",
+  MODELED: {
+    label: "Origin: Modeled",
+    shortLabel: "MODELED",
+    classes: "bg-[#1d4ed8]/10 text-[#1d4ed8] border-[#1d4ed8]/30",
+    dotClass: "bg-[#1d4ed8]",
   },
-  T3_PROXY: {
-    label: "T3 National Proxy",
-    shortLabel: "T3_PROXY",
-    classes: "bg-amber-50 text-amber-800 border-amber-200",
-    dotClass: "bg-amber-500",
+  PROXY: {
+    label: "Origin: Proxy",
+    shortLabel: "PROXY",
+    classes: "bg-[#b45309]/10 text-[#b45309] border-[#b45309]/30",
+    dotClass: "bg-[#b45309]",
+  },
+  MIXED: {
+    label: "Origin: Mixed",
+    shortLabel: "MIXED",
+    classes: "bg-[#f5f2eb] text-[#57534e] border-[#d6d0c4]",
+    dotClass: "bg-[#57534e]",
   },
 };
 
-export function ConfidenceBadge({
-  tier,
+export function OriginBadge({
+  origin,
   compact = false,
 }: {
-  tier: ConfidenceTier;
+  origin: DataOrigin | "MIXED";
   compact?: boolean;
 }) {
-  const cfg = TIER_CONFIG[tier];
+  const cfg = ORIGIN_CONFIG[origin];
   return (
     <span
-      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium tracking-tight ${cfg.classes}`}
-      title={cfg.label}
+      className={`inline-flex items-center gap-1.5 border px-2 py-0.5 font-mono text-[10px] font-medium uppercase tracking-wider ${cfg.classes}`}
+      title={`${cfg.label} (Provenance origin category — distinct from IPCC methodological Tiers 1/2/3)`}
     >
-      <span className={`h-1.5 w-1.5 rounded-full ${cfg.dotClass}`} />
+      <span className={`h-1.5 w-1.5 ${cfg.dotClass}`} />
       {compact ? cfg.shortLabel : cfg.label}
+    </span>
+  );
+}
+
+const VERIFICATION_CONFIG: Record<
+  VerificationStatus,
+  { label: string; classes: string }
+> = {
+  DOCUMENTED: {
+    label: "Documented",
+    classes: "bg-[#1d4ed8]/10 text-[#1d4ed8] border-[#1d4ed8]/30",
+  },
+  REVIEW_REQUIRED: {
+    label: "Review Required",
+    classes: "bg-[#b45309]/10 text-[#b45309] border-[#b45309]/30",
+  },
+  UNVERIFIED: {
+    label: "Unverified",
+    classes: "bg-[#9a3412]/10 text-[#9a3412] border-[#9a3412]/30",
+  },
+  INDEPENDENTLY_VERIFIED: {
+    label: "Independently Audited",
+    classes: "bg-[#1b4332]/10 text-[#1b4332] border-[#1b4332]/30",
+  },
+};
+
+export function VerificationBadge({ status }: { status: VerificationStatus }) {
+  const cfg = VERIFICATION_CONFIG[status] ?? VERIFICATION_CONFIG.UNVERIFIED;
+  return (
+    <span
+      className={`inline-flex items-center border px-2 py-0.5 font-mono text-[10px] font-medium uppercase tracking-wider ${cfg.classes}`}
+    >
+      {cfg.label}
+    </span>
+  );
+}
+
+export function CoverageBadge({ status }: { status: CoverageStatus }) {
+  const map: Record<CoverageStatus, { label: string; classes: string }> = {
+    COMPLETE: {
+      label: "Complete Coverage",
+      classes: "bg-[#1b4332]/10 text-[#1b4332] border-[#1b4332]/30",
+    },
+    PARTIAL: {
+      label: "Partial Estimate",
+      classes: "bg-[#b45309]/10 text-[#b45309] border-[#b45309]/30",
+    },
+    UNAVAILABLE: {
+      label: "Data Unavailable",
+      classes: "bg-[#f5f2eb] text-[#57534e] border-[#d6d0c4]",
+    },
+  };
+  const cfg = map[status];
+  return (
+    <span
+      className={`inline-flex items-center border px-2 py-0.5 font-mono text-[10px] font-medium uppercase tracking-wider ${cfg.classes}`}
+    >
+      {cfg.label}
     </span>
   );
 }
@@ -52,42 +122,56 @@ const RISK_CONFIG: Record<
 > = {
   VERY_LOW: {
     label: "Very Low",
-    classes: "bg-emerald-50 text-emerald-800 border-emerald-200",
-    barClass: "bg-emerald-500",
+    classes: "bg-[#1b4332]/10 text-[#1b4332] border-[#1b4332]/30",
+    barClass: "bg-[#1b4332]",
   },
   LOW: {
     label: "Low",
-    classes: "bg-lime-50 text-lime-800 border-lime-200",
-    barClass: "bg-lime-500",
+    classes: "bg-[#1b4332]/10 text-[#1b4332] border-[#1b4332]/30",
+    barClass: "bg-[#1b4332]/80",
   },
   MEDIUM: {
     label: "Medium",
-    classes: "bg-amber-50 text-amber-800 border-amber-200",
-    barClass: "bg-amber-500",
+    classes: "bg-[#eab308]/15 text-[#854d0e] border-[#eab308]/40",
+    barClass: "bg-[#eab308]",
   },
   HIGH: {
     label: "High",
-    classes: "bg-orange-50 text-orange-800 border-orange-200",
-    barClass: "bg-orange-500",
+    classes: "bg-[#d97706]/15 text-[#b45309] border-[#d97706]/40",
+    barClass: "bg-[#d97706]",
   },
   VERY_HIGH: {
     label: "Very High",
-    classes: "bg-rose-50 text-rose-800 border-rose-200",
-    barClass: "bg-rose-600",
+    classes: "bg-[#9a3412]/10 text-[#9a3412] border-[#9a3412]/35",
+    barClass: "bg-[#9a3412]",
   },
 };
 
-export function RiskClassBadge({ riskClass }: { riskClass: ClimateRiskClass }) {
+export function RiskClassBadge({
+  riskClass,
+  availabilityStatus = "AVAILABLE",
+}: {
+  riskClass: ClimateRiskClass | null;
+  availabilityStatus?: AvailabilityStatus;
+}) {
+  if (availabilityStatus !== "AVAILABLE" || riskClass === null) {
+    return (
+      <span className="inline-flex items-center border border-[#d6d0c4] bg-[#f5f2eb] px-2 py-0.5 font-mono text-[10px] font-medium uppercase tracking-wider text-[#57534e]">
+        Data unavailable
+      </span>
+    );
+  }
   const cfg = RISK_CONFIG[riskClass] ?? RISK_CONFIG.MEDIUM;
   return (
     <span
-      className={`inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-semibold ${cfg.classes}`}
+      className={`inline-flex items-center border px-2 py-0.5 font-mono text-[10px] font-medium uppercase tracking-wider ${cfg.classes}`}
     >
       {cfg.label} ({riskClass})
     </span>
   );
 }
 
-export function getRiskBarClass(riskClass: ClimateRiskClass): string {
+export function getRiskBarClass(riskClass: ClimateRiskClass | null): string {
+  if (!riskClass) return "bg-[#d6d0c4]";
   return (RISK_CONFIG[riskClass] ?? RISK_CONFIG.MEDIUM).barClass;
 }

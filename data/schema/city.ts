@@ -1,13 +1,48 @@
 /**
- * Canonical Data Contract for Municipal Climate Lens
+ * Canonical Data Contract for Municipal Climate Lens (Schema v2.0.0)
  *
- * Defines the TypeScript types and runtime validators for a Brazilian municipality
- * climate baseline and data-gap record indexed by its 7-digit IBGE code (`ibge_code`),
- * aligned with the Global Protocol for Community-Scale Greenhouse Gas Emission Inventories (GPC)
- * and AdaptaBrasil MCTI climate risk indicators.
+ * Defines TypeScript types, runtime validators, and v1.0.0 -> v2.0.0 migration
+ * adapters for Brazilian municipal climate baseline records (`public/data/<ibge_code>.json`),
+ * `public/data/index.json`, and client-side `LocalOverride` payloads.
+ *
+ * Key reliability principles:
+ * 1. Explicit missing-data representation (`null` + `availability_status` + `availability_reason`).
+ *    Never coerce unmeasured electricity or unavailable risk indices to `0.0`.
+ * 2. Separation of `data_origin` (`LOCAL` | `MODELED` | `PROXY`, distinct from IPCC tiers)
+ *    from `verification_status` (`UNVERIFIED` | `DOCUMENTED` | `REVIEW_REQUIRED` | `INDEPENDENTLY_VERIFIED`).
+ * 3. Strict boundary & period compatibility (`CoverageBoundary` + `reporting_year`) before
+ *    replacing citywide baseline values.
  */
 
-export type ConfidenceTier = "T1_LOCAL" | "T2_MODELED" | "T3_PROXY";
+export const CURRENT_SCHEMA_VERSION = "2.0.0" as const;
+
+export type AvailabilityStatus =
+  | "AVAILABLE"
+  | "UNAVAILABLE"
+  | "NOT_APPLICABLE";
+
+export type CoverageStatus = "COMPLETE" | "PARTIAL" | "UNAVAILABLE";
+
+/**
+ * Data origin categories (distinct from IPCC methodological Tiers 1/2/3).
+ */
+export type DataOrigin = "LOCAL" | "MODELED" | "PROXY";
+
+/**
+ * Evidence and review status, independent of data origin.
+ */
+export type VerificationStatus =
+  | "UNVERIFIED"
+  | "DOCUMENTED"
+  | "REVIEW_REQUIRED"
+  | "INDEPENDENTLY_VERIFIED";
+
+export type CoverageBoundary =
+  | "MUNICIPALITY_WIDE"
+  | "MUNICIPAL_GOVERNMENT_FLEET"
+  | "PUBLIC_TRANSIT_OPERATOR"
+  | "PARTIAL_FACILITY_OR_SECTOR"
+  | "UNKNOWN";
 
 export type GPCSectorCode =
   | "STATIONARY_ENERGY"
@@ -24,16 +59,33 @@ export const GPC_SECTOR_CODES: readonly GPCSectorCode[] = [
   "AFOLU",
 ] as const;
 
-export const CONFIDENCE_TIERS: readonly ConfidenceTier[] = [
-  "T1_LOCAL",
-  "T2_MODELED",
-  "T3_PROXY",
+export const AVAILABILITY_STATUSES: readonly AvailabilityStatus[] = [
+  "AVAILABLE",
+  "UNAVAILABLE",
+  "NOT_APPLICABLE",
 ] as const;
 
-/**
- * Standardized subsector keys enabling deterministic client-side local overrides
- * and transparent traceability across cities.
- */
+export const DATA_ORIGINS: readonly DataOrigin[] = [
+  "LOCAL",
+  "MODELED",
+  "PROXY",
+] as const;
+
+export const VERIFICATION_STATUSES: readonly VerificationStatus[] = [
+  "UNVERIFIED",
+  "DOCUMENTED",
+  "REVIEW_REQUIRED",
+  "INDEPENDENTLY_VERIFIED",
+] as const;
+
+export const COVERAGE_BOUNDARIES: readonly CoverageBoundary[] = [
+  "MUNICIPALITY_WIDE",
+  "MUNICIPAL_GOVERNMENT_FLEET",
+  "PUBLIC_TRANSIT_OPERATOR",
+  "PARTIAL_FACILITY_OR_SECTOR",
+  "UNKNOWN",
+] as const;
+
 export type GPCSubsectorKey =
   | "grid_electricity"
   | "stationary_fuel_combustion"
@@ -46,32 +98,43 @@ export type GPCSubsectorKey =
   | "land_use_and_forestry"
   | (string & {});
 
-/**
- * Every emission value strictly requires explicit provenance and gap metadata.
- */
 export interface SubsectorEmissionRecord {
   subsector_key: GPCSubsectorKey;
   subsector_name: string;
-  emissions_tco2e: number;
-  confidence_tier: ConfidenceTier;
+  emissions_tco2e: number | null;
+  biogenic_co2_tco2?: number | null;
+  availability_status: AvailabilityStatus;
+  availability_reason: string;
+  data_origin: DataOrigin;
+  verification_status: VerificationStatus;
   data_source: string;
+  source_reference: string;
   reference_year: number;
+  reporting_period: string;
+  geographic_coverage: string;
+  operational_coverage: string;
   methodology_note: string;
-  /**
-   * Explicitly states what local municipal record is needed to upgrade this subsector to `T1_LOCAL`,
-   * or confirms the local record applied when already at `T1_LOCAL`.
-   */
+  factor_id: string | null;
+  limitations: string;
   gap_note: string;
 }
 
 export interface SectorEmissionRecord {
   sector_code: GPCSectorCode;
   sector_name: string;
-  emissions_tco2e: number;
-  confidence_tier: ConfidenceTier;
+  emissions_tco2e: number | null;
+  coverage_status: CoverageStatus;
+  missing_subsectors: string[];
+  data_origin: DataOrigin | "MIXED";
+  verification_status: VerificationStatus;
   data_source: string;
+  source_reference: string;
   reference_year: number;
+  reporting_period: string;
+  geographic_coverage: string;
+  operational_coverage: string;
   methodology_note: string;
+  limitations: string;
   gap_note: string;
   subsectors: SubsectorEmissionRecord[];
 }
@@ -104,22 +167,26 @@ export interface ClimateRiskIndicator {
   sector_name: string;
   indicator_name: string;
   hazard_description: string;
-  /** Normalized risk index from 0.0 (minimal risk) to 1.0 (maximum risk) */
-  risk_index: number;
-  risk_class: ClimateRiskClass;
+  /** Normalized risk index from 0.0 to 1.0 when AVAILABLE; strictly null when UNAVAILABLE */
+  risk_index: number | null;
+  risk_class: ClimateRiskClass | null;
+  availability_status: AvailabilityStatus;
+  availability_reason: string;
   reference_scenario: ClimateScenario;
   reference_year: number;
-  confidence_tier: ConfidenceTier;
+  reporting_period: string;
+  data_origin: DataOrigin;
+  verification_status: VerificationStatus;
   data_source: string;
+  source_reference: string;
   methodology_note: string;
+  limitations: string;
   gap_note: string;
 }
 
 export interface MunicipalityMetadata {
-  /** 7-digit IBGE municipality code (e.g., "4115200" for Maringá, PR) */
   ibge_code: string;
   name: string;
-  /** 2-letter Brazilian UF state code (e.g., "PR") */
   state: string;
   population: number;
   population_year: number;
@@ -127,20 +194,26 @@ export interface MunicipalityMetadata {
   biome?: string;
 }
 
+export interface ProvenanceMix {
+  local_share: number;
+  modeled_share: number;
+  proxy_share: number;
+  is_mixed: boolean;
+  summary_label: string;
+}
+
 export interface EmissionsSummary {
-  total_emissions_tco2e: number;
-  per_capita_tco2e: number;
+  total_emissions_tco2e: number | null;
+  per_capita_tco2e: number | null;
+  coverage_status: CoverageStatus;
+  missing_components: string[];
   reference_year: number;
-  dominant_sector: GPCSectorCode;
-  tier_breakdown: {
-    T1_LOCAL_share: number;
-    T2_MODELED_share: number;
-    T3_PROXY_share: number;
-  };
+  dominant_sector: GPCSectorCode | null;
+  provenance_mix: ProvenanceMix;
 }
 
 export interface CityClimateRecord {
-  schema_version: "1.0.0";
+  schema_version: "2.0.0";
   metadata: MunicipalityMetadata;
   emissions_summary: EmissionsSummary;
   sectors: Record<GPCSectorCode, SectorEmissionRecord>;
@@ -148,31 +221,59 @@ export interface CityClimateRecord {
   last_updated: string;
 }
 
-/**
- * Structured client-side LocalOverride schema supporting primary municipal activity inputs:
- * - Grid electricity consumption (MWh/year) using Brazil's SIN grid emission factor.
- * - Municipal/urban fleet fuel consumption (diesel, gasoline, ethanol liters) using Brazilian MCTI/GHG Protocol emission factors.
- * - Solid waste landfill tonnage (tons/year and methane capture boolean).
- */
+export interface ElectricityOverrideInput {
+  mwh_per_year: number;
+  reporting_year: number;
+  coverage_boundary: CoverageBoundary;
+  source_reference: string;
+  methodology_note?: string;
+  needs_review?: boolean;
+}
+
+export interface FleetFuelsOverrideInput {
+  diesel_liters: number;
+  gasoline_liters: number;
+  ethanol_liters: number;
+  reporting_year: number;
+  coverage_boundary: CoverageBoundary;
+  source_reference: string;
+  methodology_note?: string;
+  needs_review?: boolean;
+}
+
+export interface SolidWasteOverrideInput {
+  tons_per_year: number;
+  has_methane_capture: boolean;
+  methane_capture_efficiency?: number;
+  reporting_year: number;
+  coverage_boundary: CoverageBoundary;
+  source_reference: string;
+  methodology_note?: string;
+  needs_review?: boolean;
+}
+
 export interface LocalOverride {
-  reference_year?: number;
-  electricity?: {
-    mwh_per_year: number;
-    source_note?: string;
-  };
-  fleet_fuels?: {
-    diesel_liters: number;
-    gasoline_liters: number;
-    ethanol_liters: number;
-    source_note?: string;
-  };
-  solid_waste?: {
-    tons_per_year: number;
-    has_methane_capture: boolean;
-    /** Optional capture efficiency override (default 0.55 when has_methane_capture is true) */
-    methane_capture_efficiency?: number;
-    source_note?: string;
-  };
+  override_schema_version: "2.0.0";
+  electricity?: ElectricityOverrideInput;
+  fleet_fuels?: FleetFuelsOverrideInput;
+  solid_waste?: SolidWasteOverrideInput;
+}
+
+export interface PartialOrUnmergedEstimate {
+  component: "electricity" | "fleet_fuels" | "solid_waste";
+  target_sector: GPCSectorCode;
+  target_subsector: GPCSubsectorKey;
+  calculated_tco2e: number;
+  biogenic_co2_tco2: number;
+  reporting_year: number;
+  coverage_boundary: CoverageBoundary;
+  data_origin: "LOCAL";
+  verification_status: VerificationStatus;
+  factor_ids: string[];
+  factor_verified: boolean;
+  source_reference: string;
+  reason_not_merged: string;
+  limitations: string;
 }
 
 export interface CityIndexEntry {
@@ -181,24 +282,28 @@ export interface CityIndexEntry {
   state: string;
   population: number;
   population_year: number;
-  total_emissions_tco2e: number;
-  total_tco2e: number;
-  per_capita_tco2e: number;
-  dominant_sector: GPCSectorCode;
-  primary_confidence_tier: ConfidenceTier;
-  proxy_share_pct: number;
+  total_emissions_tco2e: number | null;
+  total_tco2e: number | null;
+  per_capita_tco2e: number | null;
+  coverage_status: CoverageStatus;
+  missing_components_count: number;
+  dominant_sector: GPCSectorCode | null;
+  provenance_label: string;
+  local_share_pct: number;
   modeled_share_pct: number;
-  sector_totals: Record<GPCSectorCode, number>;
+  proxy_share_pct: number;
+  sector_totals: Record<GPCSectorCode, number | null>;
   top_climate_risk: {
     sector_code: AdaptaBrasilSectorCode;
     indicator_name: string;
-    risk_index: number;
-    risk_class: ClimateRiskClass;
+    risk_index: number | null;
+    risk_class: ClimateRiskClass | null;
+    availability_status: AvailabilityStatus;
   } | null;
 }
 
 export interface CityIndexManifest {
-  schema_version: "1.0.0";
+  schema_version: "2.0.0";
   generated_at: string;
   municipalities: CityIndexEntry[];
 }
@@ -215,12 +320,16 @@ function isNonEmptyString(val: unknown): val is string {
   return typeof val === "string" && val.trim().length > 0;
 }
 
+function isFiniteNumber(val: unknown): val is number {
+  return typeof val === "number" && Number.isFinite(val);
+}
+
 function isFiniteNonNegativeNumber(val: unknown): val is number {
-  return typeof val === "number" && Number.isFinite(val) && val >= 0;
+  return isFiniteNumber(val) && val >= 0;
 }
 
 /**
- * Deterministic runtime validator for a SubsectorEmissionRecord.
+ * Deterministic runtime validator for SubsectorEmissionRecord (v2.0.0).
  */
 export function validateSubsectorRecord(
   record: unknown,
@@ -238,19 +347,51 @@ export function validateSubsectorRecord(
   if (!isNonEmptyString(r.subsector_name)) {
     errors.push(`${pathPrefix}.subsector_name: must be a non-empty string`);
   }
-  if (typeof r.emissions_tco2e !== "number" || !Number.isFinite(r.emissions_tco2e)) {
-    errors.push(`${pathPrefix}.emissions_tco2e: must be a finite number`);
-  }
   if (
-    typeof r.confidence_tier !== "string" ||
-    !CONFIDENCE_TIERS.includes(r.confidence_tier as ConfidenceTier)
+    typeof r.availability_status !== "string" ||
+    !AVAILABILITY_STATUSES.includes(r.availability_status as AvailabilityStatus)
   ) {
     errors.push(
-      `${pathPrefix}.confidence_tier: must be one of ${CONFIDENCE_TIERS.join(", ")}`
+      `${pathPrefix}.availability_status: must be one of ${AVAILABILITY_STATUSES.join(", ")}`
+    );
+  } else if (r.availability_status === "AVAILABLE") {
+    if (!isFiniteNumber(r.emissions_tco2e)) {
+      errors.push(
+        `${pathPrefix}.emissions_tco2e: must be a finite number when availability_status is AVAILABLE`
+      );
+    }
+  } else {
+    if (r.emissions_tco2e !== null) {
+      errors.push(
+        `${pathPrefix}.emissions_tco2e: must be null when availability_status is ${r.availability_status}`
+      );
+    }
+  }
+
+  if (!isNonEmptyString(r.availability_reason)) {
+    errors.push(`${pathPrefix}.availability_reason: must be a non-empty string`);
+  }
+  if (
+    typeof r.data_origin !== "string" ||
+    !DATA_ORIGINS.includes(r.data_origin as DataOrigin)
+  ) {
+    errors.push(
+      `${pathPrefix}.data_origin: must be one of ${DATA_ORIGINS.join(", ")}`
+    );
+  }
+  if (
+    typeof r.verification_status !== "string" ||
+    !VERIFICATION_STATUSES.includes(r.verification_status as VerificationStatus)
+  ) {
+    errors.push(
+      `${pathPrefix}.verification_status: must be one of ${VERIFICATION_STATUSES.join(", ")}`
     );
   }
   if (!isNonEmptyString(r.data_source)) {
     errors.push(`${pathPrefix}.data_source: must be a non-empty string`);
+  }
+  if (!isNonEmptyString(r.source_reference)) {
+    errors.push(`${pathPrefix}.source_reference: must be a non-empty string`);
   }
   if (
     typeof r.reference_year !== "number" ||
@@ -262,8 +403,20 @@ export function validateSubsectorRecord(
       `${pathPrefix}.reference_year: must be an integer between 1990 and 2100`
     );
   }
+  if (!isNonEmptyString(r.reporting_period)) {
+    errors.push(`${pathPrefix}.reporting_period: must be a non-empty string`);
+  }
+  if (!isNonEmptyString(r.geographic_coverage)) {
+    errors.push(`${pathPrefix}.geographic_coverage: must be a non-empty string`);
+  }
+  if (!isNonEmptyString(r.operational_coverage)) {
+    errors.push(`${pathPrefix}.operational_coverage: must be a non-empty string`);
+  }
   if (!isNonEmptyString(r.methodology_note)) {
     errors.push(`${pathPrefix}.methodology_note: must be a non-empty string`);
+  }
+  if (!isNonEmptyString(r.limitations)) {
+    errors.push(`${pathPrefix}.limitations: must be a non-empty string`);
   }
   if (!isNonEmptyString(r.gap_note)) {
     errors.push(`${pathPrefix}.gap_note: must be a non-empty string`);
@@ -273,7 +426,7 @@ export function validateSubsectorRecord(
 }
 
 /**
- * Deterministic runtime validator for a CityClimateRecord.
+ * Deterministic runtime validator for CityClimateRecord (v2.0.0).
  */
 export function validateCityClimateRecord(data: unknown): ValidationResult {
   const errors: string[] = [];
@@ -284,11 +437,13 @@ export function validateCityClimateRecord(data: unknown): ValidationResult {
 
   const record = data as Record<string, unknown>;
 
-  if (record.schema_version !== "1.0.0") {
-    errors.push(`schema_version: expected "1.0.0", got "${String(record.schema_version)}"`);
+  if (record.schema_version !== CURRENT_SCHEMA_VERSION) {
+    errors.push(
+      `schema_version: expected "${CURRENT_SCHEMA_VERSION}", got "${String(record.schema_version)}"`
+    );
   }
 
-  // Validate metadata
+  // Metadata
   const meta = record.metadata as Record<string, unknown> | undefined;
   if (!meta || typeof meta !== "object") {
     errors.push("metadata: must be an object");
@@ -319,8 +474,11 @@ export function validateCityClimateRecord(data: unknown): ValidationResult {
     }
   }
 
-  // Validate sectors
+  // Sectors
   const sectors = record.sectors as Record<string, unknown> | undefined;
+  let availableSectorSum = 0;
+  let availableSectorCount = 0;
+
   if (!sectors || typeof sectors !== "object") {
     errors.push("sectors: must be an object");
   } else {
@@ -337,63 +495,73 @@ export function validateCityClimateRecord(data: unknown): ValidationResult {
       if (!isNonEmptyString(s.sector_name)) {
         errors.push(`${prefix}.sector_name: must be a non-empty string`);
       }
-      if (typeof s.emissions_tco2e !== "number" || !Number.isFinite(s.emissions_tco2e)) {
-        errors.push(`${prefix}.emissions_tco2e: must be a finite number`);
-      }
-      if (
-        typeof s.confidence_tier !== "string" ||
-        !CONFIDENCE_TIERS.includes(s.confidence_tier as ConfidenceTier)
-      ) {
-        errors.push(
-          `${prefix}.confidence_tier: must be one of ${CONFIDENCE_TIERS.join(", ")}`
-        );
-      }
-      if (!isNonEmptyString(s.data_source)) {
-        errors.push(`${prefix}.data_source: must be a non-empty string`);
-      }
-      if (
-        typeof s.reference_year !== "number" ||
-        !Number.isInteger(s.reference_year) ||
-        s.reference_year < 1990 ||
-        s.reference_year > 2100
-      ) {
-        errors.push(`${prefix}.reference_year: must be a valid integer year`);
-      }
-      if (!isNonEmptyString(s.methodology_note)) {
-        errors.push(`${prefix}.methodology_note: must be a non-empty string`);
-      }
-      if (!isNonEmptyString(s.gap_note)) {
-        errors.push(`${prefix}.gap_note: must be a non-empty string`);
-      }
       if (!Array.isArray(s.subsectors) || s.subsectors.length === 0) {
         errors.push(`${prefix}.subsectors: must be a non-empty array`);
       } else {
-        let subsectorSum = 0;
+        let subSum = 0;
+        let availCount = 0;
         s.subsectors.forEach((sub, idx) => {
           errors.push(
             ...validateSubsectorRecord(sub, `${prefix}.subsectors[${idx}]`)
           );
-          if (
-            sub &&
-            typeof sub === "object" &&
-            typeof (sub as Record<string, unknown>).emissions_tco2e === "number"
-          ) {
-            subsectorSum += (sub as Record<string, unknown>).emissions_tco2e as number;
+          if (sub && typeof sub === "object") {
+            const subObj = sub as Record<string, unknown>;
+            if (
+              subObj.availability_status === "AVAILABLE" &&
+              isFiniteNumber(subObj.emissions_tco2e)
+            ) {
+              subSum += subObj.emissions_tco2e;
+              availCount += 1;
+            }
           }
         });
-        if (
-          typeof s.emissions_tco2e === "number" &&
-          Math.abs(s.emissions_tco2e - subsectorSum) > 0.01
-        ) {
-          errors.push(
-            `${prefix}.emissions_tco2e (${s.emissions_tco2e}) does not match sum of subsectors (${subsectorSum.toFixed(2)})`
-          );
+
+        if (availCount === 0) {
+          if (s.emissions_tco2e !== null) {
+            errors.push(
+              `${prefix}.emissions_tco2e: must be null when no subsectors are AVAILABLE`
+            );
+          }
+        } else {
+          if (!isFiniteNumber(s.emissions_tco2e)) {
+            errors.push(
+              `${prefix}.emissions_tco2e: must be a finite number when subsectors are AVAILABLE`
+            );
+          } else {
+            if (Math.abs(s.emissions_tco2e - subSum) > 0.02) {
+              errors.push(
+                `${prefix}.emissions_tco2e (${s.emissions_tco2e}) does not match sum of AVAILABLE subsectors (${subSum.toFixed(2)})`
+              );
+            }
+            availableSectorSum += s.emissions_tco2e;
+            availableSectorCount += 1;
+          }
         }
       }
     }
   }
 
-  // Validate climate_risks
+  // Summary total parity
+  const summary = record.emissions_summary as Record<string, unknown> | undefined;
+  if (!summary || typeof summary !== "object") {
+    errors.push("emissions_summary: must be an object");
+  } else {
+    if (availableSectorCount === 0) {
+      if (summary.total_emissions_tco2e !== null) {
+        errors.push(
+          "emissions_summary.total_emissions_tco2e: must be null when no sectors are AVAILABLE"
+        );
+      }
+    } else if (!isFiniteNumber(summary.total_emissions_tco2e)) {
+      errors.push("emissions_summary.total_emissions_tco2e: must be a finite number");
+    } else if (Math.abs(summary.total_emissions_tco2e - availableSectorSum) > 0.05) {
+      errors.push(
+        `emissions_summary.total_emissions_tco2e (${summary.total_emissions_tco2e}) does not match sum of AVAILABLE sectors (${availableSectorSum.toFixed(2)})`
+      );
+    }
+  }
+
+  // Climate risks
   const risks = record.climate_risks;
   if (!Array.isArray(risks) || risks.length === 0) {
     errors.push("climate_risks: must be a non-empty array");
@@ -405,42 +573,47 @@ export function validateCityClimateRecord(data: unknown): ValidationResult {
         return;
       }
       const r = risk as Record<string, unknown>;
-      if (!isNonEmptyString(r.sector_code)) {
-        errors.push(`${prefix}.sector_code: must be a non-empty string`);
+      if (
+        typeof r.availability_status !== "string" ||
+        !AVAILABILITY_STATUSES.includes(r.availability_status as AvailabilityStatus)
+      ) {
+        errors.push(`${prefix}.availability_status: invalid`);
+      } else if (r.availability_status === "AVAILABLE") {
+        if (!isFiniteNumber(r.risk_index) || r.risk_index < 0 || r.risk_index > 1) {
+          errors.push(`${prefix}.risk_index: must be between 0.0 and 1.0 when AVAILABLE`);
+        }
+        if (!isNonEmptyString(r.risk_class)) {
+          errors.push(`${prefix}.risk_class: must be non-empty when AVAILABLE`);
+        }
+      } else {
+        if (r.risk_index !== null) {
+          errors.push(`${prefix}.risk_index: must be null when ${r.availability_status}`);
+        }
+        if (r.risk_class !== null) {
+          errors.push(`${prefix}.risk_class: must be null when ${r.availability_status}`);
+        }
       }
-      if (!isNonEmptyString(r.sector_name)) {
-        errors.push(`${prefix}.sector_name: must be a non-empty string`);
-      }
-      if (!isNonEmptyString(r.indicator_name)) {
-        errors.push(`${prefix}.indicator_name: must be a non-empty string`);
+
+      if (!isNonEmptyString(r.availability_reason)) {
+        errors.push(`${prefix}.availability_reason: must be a non-empty string`);
       }
       if (
-        typeof r.risk_index !== "number" ||
-        !Number.isFinite(r.risk_index) ||
-        r.risk_index < 0 ||
-        r.risk_index > 1
+        typeof r.data_origin !== "string" ||
+        !DATA_ORIGINS.includes(r.data_origin as DataOrigin)
       ) {
-        errors.push(`${prefix}.risk_index: must be a number between 0.0 and 1.0`);
-      }
-      if (!isNonEmptyString(r.risk_class)) {
-        errors.push(`${prefix}.risk_class: must be a non-empty string`);
-      }
-      if (!isNonEmptyString(r.reference_scenario)) {
-        errors.push(`${prefix}.reference_scenario: must be a non-empty string`);
+        errors.push(`${prefix}.data_origin: invalid`);
       }
       if (
-        typeof r.confidence_tier !== "string" ||
-        !CONFIDENCE_TIERS.includes(r.confidence_tier as ConfidenceTier)
+        typeof r.verification_status !== "string" ||
+        !VERIFICATION_STATUSES.includes(r.verification_status as VerificationStatus)
       ) {
-        errors.push(
-          `${prefix}.confidence_tier: must be one of ${CONFIDENCE_TIERS.join(", ")}`
-        );
+        errors.push(`${prefix}.verification_status: invalid`);
       }
       if (!isNonEmptyString(r.data_source)) {
         errors.push(`${prefix}.data_source: must be a non-empty string`);
       }
-      if (!isNonEmptyString(r.methodology_note)) {
-        errors.push(`${prefix}.methodology_note: must be a non-empty string`);
+      if (!isNonEmptyString(r.source_reference)) {
+        errors.push(`${prefix}.source_reference: must be a non-empty string`);
       }
       if (!isNonEmptyString(r.gap_note)) {
         errors.push(`${prefix}.gap_note: must be a non-empty string`);
@@ -455,7 +628,7 @@ export function validateCityClimateRecord(data: unknown): ValidationResult {
 }
 
 /**
- * Deterministic runtime validator for LocalOverride inputs.
+ * Deterministic runtime validator for LocalOverride v2.0.0.
  */
 export function validateLocalOverride(override: unknown): ValidationResult {
   const errors: string[] = [];
@@ -465,17 +638,33 @@ export function validateLocalOverride(override: unknown): ValidationResult {
   }
 
   const o = override as Record<string, unknown>;
-
-  if (o.reference_year !== undefined) {
-    if (
-      typeof o.reference_year !== "number" ||
-      !Number.isInteger(o.reference_year) ||
-      o.reference_year < 1990 ||
-      o.reference_year > 2100
-    ) {
-      errors.push("reference_year: must be an integer between 1990 and 2100");
-    }
+  if (o.override_schema_version !== CURRENT_SCHEMA_VERSION) {
+    errors.push(
+      `override_schema_version: expected "${CURRENT_SCHEMA_VERSION}", got "${String(o.override_schema_version)}"`
+    );
   }
+
+  const validateSectionMeta = (sec: Record<string, unknown>, name: string) => {
+    if (
+      typeof sec.reporting_year !== "number" ||
+      !Number.isInteger(sec.reporting_year) ||
+      sec.reporting_year < 1990 ||
+      sec.reporting_year > 2100
+    ) {
+      errors.push(`${name}.reporting_year: must be an integer between 1990 and 2100`);
+    }
+    if (
+      typeof sec.coverage_boundary !== "string" ||
+      !COVERAGE_BOUNDARIES.includes(sec.coverage_boundary as CoverageBoundary)
+    ) {
+      errors.push(
+        `${name}.coverage_boundary: must be one of ${COVERAGE_BOUNDARIES.join(", ")}`
+      );
+    }
+    if (typeof sec.source_reference !== "string") {
+      errors.push(`${name}.source_reference: must be a string`);
+    }
+  };
 
   if (o.electricity !== undefined) {
     if (!o.electricity || typeof o.electricity !== "object") {
@@ -485,6 +674,7 @@ export function validateLocalOverride(override: unknown): ValidationResult {
       if (!isFiniteNonNegativeNumber(elec.mwh_per_year)) {
         errors.push("electricity.mwh_per_year: must be a non-negative finite number");
       }
+      validateSectionMeta(elec, "electricity");
     }
   }
 
@@ -502,6 +692,7 @@ export function validateLocalOverride(override: unknown): ValidationResult {
       if (!isFiniteNonNegativeNumber(fuels.ethanol_liters)) {
         errors.push("fleet_fuels.ethanol_liters: must be a non-negative finite number");
       }
+      validateSectionMeta(fuels, "fleet_fuels");
     }
   }
 
@@ -516,18 +707,17 @@ export function validateLocalOverride(override: unknown): ValidationResult {
       if (typeof waste.has_methane_capture !== "boolean") {
         errors.push("solid_waste.has_methane_capture: must be a boolean");
       }
-      if (waste.methane_capture_efficiency !== undefined) {
-        if (
-          typeof waste.methane_capture_efficiency !== "number" ||
-          !Number.isFinite(waste.methane_capture_efficiency) ||
+      if (
+        waste.methane_capture_efficiency !== undefined &&
+        (!isFiniteNumber(waste.methane_capture_efficiency) ||
           waste.methane_capture_efficiency < 0 ||
-          waste.methane_capture_efficiency > 1
-        ) {
-          errors.push(
-            "solid_waste.methane_capture_efficiency: must be a number between 0.0 and 1.0"
-          );
-        }
+          waste.methane_capture_efficiency > 1)
+      ) {
+        errors.push(
+          "solid_waste.methane_capture_efficiency: must be between 0.0 and 1.0"
+        );
       }
+      validateSectionMeta(waste, "solid_waste");
     }
   }
 
@@ -535,4 +725,92 @@ export function validateLocalOverride(override: unknown): ValidationResult {
     valid: errors.length === 0,
     errors,
   };
+}
+
+/**
+ * Safely migrate a legacy v1.0.0 LocalOverride payload (from browser localStorage)
+ * to v2.0.0. Preserves recoverable numeric inputs and flags missing boundary/evidence
+ * metadata with `needs_review: true` and `coverage_boundary: "UNKNOWN"` instead of
+ * granting stronger status.
+ */
+export function migrateLegacyOverride(
+  raw: unknown,
+  defaultYear = 2025
+): LocalOverride | null {
+  if (!raw || typeof raw !== "object") return null;
+  const obj = raw as Record<string, unknown>;
+
+  if (obj.override_schema_version === CURRENT_SCHEMA_VERSION) {
+    return validateLocalOverride(obj).valid ? (obj as unknown as LocalOverride) : null;
+  }
+
+  const legacyYear =
+    typeof obj.reference_year === "number" && Number.isInteger(obj.reference_year)
+      ? obj.reference_year
+      : defaultYear;
+
+  const migrated: LocalOverride = {
+    override_schema_version: CURRENT_SCHEMA_VERSION,
+  };
+
+  if (obj.electricity && typeof obj.electricity === "object") {
+    const e = obj.electricity as Record<string, unknown>;
+    if (isFiniteNonNegativeNumber(e.mwh_per_year)) {
+      const src = isNonEmptyString(e.source_note) ? e.source_note.trim() : "";
+      migrated.electricity = {
+        mwh_per_year: e.mwh_per_year,
+        reporting_year: legacyYear,
+        coverage_boundary: "UNKNOWN",
+        source_reference: src,
+        needs_review: true,
+      };
+    }
+  }
+
+  if (obj.fleet_fuels && typeof obj.fleet_fuels === "object") {
+    const f = obj.fleet_fuels as Record<string, unknown>;
+    if (
+      isFiniteNonNegativeNumber(f.diesel_liters) &&
+      isFiniteNonNegativeNumber(f.gasoline_liters) &&
+      isFiniteNonNegativeNumber(f.ethanol_liters)
+    ) {
+      const src = isNonEmptyString(f.source_note) ? f.source_note.trim() : "";
+      migrated.fleet_fuels = {
+        diesel_liters: f.diesel_liters,
+        gasoline_liters: f.gasoline_liters,
+        ethanol_liters: f.ethanol_liters,
+        reporting_year: legacyYear,
+        coverage_boundary: "UNKNOWN",
+        source_reference: src,
+        needs_review: true,
+      };
+    }
+  }
+
+  if (obj.solid_waste && typeof obj.solid_waste === "object") {
+    const w = obj.solid_waste as Record<string, unknown>;
+    if (
+      isFiniteNonNegativeNumber(w.tons_per_year) &&
+      typeof w.has_methane_capture === "boolean"
+    ) {
+      const src = isNonEmptyString(w.source_note) ? w.source_note.trim() : "";
+      migrated.solid_waste = {
+        tons_per_year: w.tons_per_year,
+        has_methane_capture: w.has_methane_capture,
+        methane_capture_efficiency: isFiniteNumber(w.methane_capture_efficiency)
+          ? w.methane_capture_efficiency
+          : undefined,
+        reporting_year: legacyYear,
+        coverage_boundary: "UNKNOWN",
+        source_reference: src,
+        needs_review: true,
+      };
+    }
+  }
+
+  if (!migrated.electricity && !migrated.fleet_fuels && !migrated.solid_waste) {
+    return null;
+  }
+
+  return migrated;
 }
