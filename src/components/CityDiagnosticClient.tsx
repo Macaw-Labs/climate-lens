@@ -684,8 +684,8 @@ export function CityDiagnosticClient({
                 </span>
               </div>
               <p className="mt-1.5 text-xs text-[#57534e]">
-                Spatially modeled (MapBiomas land-use &amp; IBGE agricultural
-                census).
+                SEEG Coleção 14.0 AFOLU modeled via MapBiomas land-use &amp;
+                IBGE PPM/PAM agricultural census.
               </p>
             </div>
 
@@ -697,7 +697,8 @@ export function CityDiagnosticClient({
                 </span>
               </div>
               <p className="mt-1.5 text-xs text-[#57534e]">
-                State/national top-down disaggregation awaiting local records.
+                SEEG Coleção 14.0 state/national top-down disaggregation
+                (Energy, Transport, Waste, IPPU) awaiting local records.
               </p>
             </div>
           </div>

@@ -72,22 +72,28 @@ export default function HomePage() {
                     <span className="mt-1 h-2 w-2 shrink-0 bg-[#1b4332]" />
                     <span>
                       <strong className="text-[#171717]">LOCAL</strong> — Municipal
-                      utility, fuel, or weighbridge entry (requires evidence &amp;
-                      compatible boundary).
+                      utility, fuel, or weighbridge entry (entered locally;
+                      requires evidence &amp; compatible boundary).
                     </span>
                   </div>
                   <div className="flex items-start gap-2">
                     <span className="mt-1 h-2 w-2 shrink-0 bg-[#1d4ed8]" />
                     <span>
-                      <strong className="text-[#171717]">MODELED</strong> — Spatially
-                      modeled (MapBiomas / AdaptaBrasil).
+                      <strong className="text-[#171717]">MODELED</strong> — SEEG
+                      Coleção 14.0 AFOLU modeled via MapBiomas &amp; IBGE
+                      PPM/PAM; AdaptaBrasil MCTI risk indices.
                     </span>
                   </div>
                   <div className="flex items-start gap-2">
                     <span className="mt-1 h-2 w-2 shrink-0 bg-[#b45309]" />
                     <span>
-                      <strong className="text-[#171717]">PROXY</strong> — State or
-                      national top-down disaggregation.
+                      <strong className="text-[#171717]">PROXY</strong> — Top-down
+                      disaggregation from{" "}
+                      <strong className="text-[#171717]">
+                        SEEG Coleção 14.0
+                      </strong>{" "}
+                      (state/national Energy, Transport, Waste &amp; IPPU totals
+                      allocated via population, fleet, or SNIS proxies).
                     </span>
                   </div>
                   <p className="border-t border-[#e7e2d8] pt-2 text-[11px] leading-snug text-[#78716c]">

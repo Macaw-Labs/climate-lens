@@ -398,11 +398,15 @@ export function CitySelectorClient({
                 title={`Origin Proxy: ${formatNumber(statewide.proxySharePct, 1)}%`}
               />
             </div>
-            <p className="mt-2 text-xs text-[#57534e]">
+            <p className="mt-2 text-xs leading-relaxed text-[#57534e]">
+              <strong className="font-semibold text-[#171717]">Proxy:</strong>{" "}
+              SEEG Coleção 14.0 top-down (Energy, Transport, Waste, IPPU).{" "}
+              <strong className="font-semibold text-[#171717]">Modeled:</strong>{" "}
+              MapBiomas / IBGE (AFOLU).{" "}
               <strong className="font-mono font-medium text-[#171717]">
                 0.0%
               </strong>{" "}
-              Local origin in public baseline.
+              Local in public baseline.
             </p>
           </div>
 
