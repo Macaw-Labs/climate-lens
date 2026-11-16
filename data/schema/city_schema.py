@@ -79,7 +79,7 @@ CITY_CLIMATE_JSON_SCHEMA: Dict[str, Any] = {
                 "ibge_code": {"type": "string", "pattern": "^\\d{7}$"},
                 "name": {"type": "string", "minLength": 1},
                 "state": {"type": "string", "pattern": "^[A-Z]{2}$"},
-                "population": {"type": "integer", "minimum": 1},
+                "population": {"type": ["integer", "null"], "minimum": 1},
                 "population_year": {"type": "integer", "minimum": 1990, "maximum": 2100},
                 "area_km2": {"type": "number", "exclusiveMinimum": 0},
                 "biome": {"type": "string"},
@@ -167,8 +167,10 @@ def validate_city_climate_record(payload: Dict[str, Any]) -> List[str]:
         if not isinstance(state, str) or not re.match(r"^[A-Z]{2}$", state):
             errors.append("metadata.state: must be a 2-letter uppercase UF code")
         pop = meta.get("population")
-        if not isinstance(pop, int) or isinstance(pop, bool) or pop <= 0:
-            errors.append("metadata.population: must be a positive integer")
+        if pop is not None and (
+            not isinstance(pop, int) or isinstance(pop, bool) or pop <= 0
+        ):
+            errors.append("metadata.population: must be a positive integer or null")
         pop_yr = meta.get("population_year")
         if (
             not isinstance(pop_yr, int)

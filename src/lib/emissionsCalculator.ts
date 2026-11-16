@@ -326,7 +326,7 @@ export function recalculateSectorRecord(
  */
 export function computeEmissionsSummary(
   sectors: Record<GPCSectorCode, SectorEmissionRecord>,
-  population: number,
+  population: number | null,
   referenceYear: number
 ): EmissionsSummary {
   let totalEmissions = 0;
@@ -370,7 +370,7 @@ export function computeEmissionsSummary(
   const roundedTotal =
     availableSectorCount === 0 ? null : round2(totalEmissions);
   const perCapita =
-    roundedTotal !== null && population > 0
+    roundedTotal !== null && population !== null && population > 0
       ? round4(roundedTotal / population)
       : null;
 

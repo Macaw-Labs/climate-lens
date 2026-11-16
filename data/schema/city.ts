@@ -188,7 +188,7 @@ export interface MunicipalityMetadata {
   ibge_code: string;
   name: string;
   state: string;
-  population: number;
+  population: number | null;
   population_year: number;
   area_km2?: number;
   biome?: string;
@@ -280,7 +280,7 @@ export interface CityIndexEntry {
   ibge_code: string;
   name: string;
   state: string;
-  population: number;
+  population: number | null;
   population_year: number;
   total_emissions_tco2e: number | null;
   total_tco2e: number | null;
@@ -458,11 +458,12 @@ export function validateCityClimateRecord(data: unknown): ValidationResult {
       errors.push("metadata.state: must be a 2-letter uppercase UF code");
     }
     if (
-      typeof meta.population !== "number" ||
-      !Number.isInteger(meta.population) ||
-      meta.population <= 0
+      meta.population !== null &&
+      (typeof meta.population !== "number" ||
+        !Number.isInteger(meta.population) ||
+        meta.population <= 0)
     ) {
-      errors.push("metadata.population: must be a positive integer");
+      errors.push("metadata.population: must be a positive integer or null");
     }
     if (
       typeof meta.population_year !== "number" ||

@@ -271,7 +271,9 @@ export function CityDiagnosticClient({
             <p className="text-sm text-[#57534e]">
               Population:{" "}
               <strong className="font-mono font-medium text-[#171717]">
-                {formatNumber(metadata.population, 0)}
+                {metadata.population !== null
+                  ? formatNumber(metadata.population, 0)
+                  : "Unavailable"}
               </strong>{" "}
               (Censo {metadata.population_year})
               {metadata.area_km2 ? (

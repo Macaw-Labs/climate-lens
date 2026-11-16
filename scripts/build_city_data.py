@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import sys
 from pathlib import Path
@@ -129,8 +130,39 @@ def _build_provenance_label(
     return is_mixed, f"{prefix}{' / '.join(parts)}{suffix}"
 
 
+def _subsector_metric(
+    sub_totals: Dict[str, Optional[float]],
+    key: str,
+    reference_year: int,
+    *,
+    include_value_in_reason: bool = False,
+) -> Tuple[Optional[float], str, str]:
+    """Return (emissions_tco2e, availability_status, availability_reason) without coercing missing to 0.0."""
+    raw = sub_totals.get(key)
+    if raw is None:
+        return (
+            None,
+            "UNAVAILABLE",
+            f"Subsector '{key}' was absent or missing in SEEG Coleção 14.0 ({reference_year}); marked UNAVAILABLE (null) rather than 0.0.",
+        )
+    val = float(raw)
+    if math.isnan(val):
+        return (
+            None,
+            "UNAVAILABLE",
+            f"Subsector '{key}' had no numeric observations in SEEG Coleção 14.0 ({reference_year}); marked UNAVAILABLE (null) rather than 0.0.",
+        )
+    rounded = _round2(val)
+    reason = (
+        f"Reported in SEEG Coleção 14.0 GWP-AR5 ({reference_year}) as {rounded:.2f} tCO2e."
+        if include_value_in_reason
+        else f"Reported in SEEG Coleção 14.0 GWP-AR5 ({reference_year})."
+    )
+    return rounded, "AVAILABLE", reason
+
+
 def build_sectors_from_subsector_totals(
-    sub_totals: Dict[str, float],
+    sub_totals: Dict[str, Optional[float]],
     reference_year: int,
     city_name: str,
     ibge_code: str,
@@ -139,14 +171,33 @@ def build_sectors_from_subsector_totals(
     Construct the 5 GPC sectors and subsectors with explicit availability status,
     data origin (separate from IPCC tiers), verification status, and limitations.
     """
-    stat_fuel = _round2(sub_totals.get("stationary_fuel_combustion", 0.0))
-    on_road = _round2(sub_totals.get("on_road_transportation", 0.0))
-    off_road = _round2(sub_totals.get("off_road_and_aviation", 0.0))
-    solid_waste = _round2(sub_totals.get("solid_waste_disposal", 0.0))
-    wastewater = _round2(sub_totals.get("wastewater_treatment", 0.0))
-    ippu_val = _round2(sub_totals.get("industrial_processes", 0.0))
-    agro_val = _round2(sub_totals.get("agriculture_and_livestock", 0.0))
-    lulucf_val = _round2(sub_totals.get("land_use_and_forestry", 0.0))
+    stat_fuel, stat_fuel_status, stat_fuel_reason = _subsector_metric(
+        sub_totals, "stationary_fuel_combustion", reference_year
+    )
+    on_road, on_road_status, on_road_reason = _subsector_metric(
+        sub_totals, "on_road_transportation", reference_year
+    )
+    off_road, off_road_status, off_road_reason = _subsector_metric(
+        sub_totals, "off_road_and_aviation", reference_year
+    )
+    solid_waste, solid_waste_status, solid_waste_reason = _subsector_metric(
+        sub_totals, "solid_waste_disposal", reference_year
+    )
+    wastewater, wastewater_status, wastewater_reason = _subsector_metric(
+        sub_totals, "wastewater_treatment", reference_year
+    )
+    ippu_val, ippu_status, ippu_reason = _subsector_metric(
+        sub_totals,
+        "industrial_processes",
+        reference_year,
+        include_value_in_reason=True,
+    )
+    agro_val, agro_status, agro_reason = _subsector_metric(
+        sub_totals, "agriculture_and_livestock", reference_year
+    )
+    lulucf_val, lulucf_status, lulucf_reason = _subsector_metric(
+        sub_totals, "land_use_and_forestry", reference_year
+    )
 
     seeg_ref = f"SEEG Municípios Coleção 14.0 (GWP-AR5, {reference_year}) — https://seeg.eco.br/dados/"
     geo_cov = f"Municipality-wide ({city_name}, IBGE {ibge_code})"
@@ -185,8 +236,8 @@ def build_sectors_from_subsector_totals(
             "subsector_key": "stationary_fuel_combustion",
             "subsector_name": "Stationary Fuel Combustion (Residential, Commercial, Industrial & Public)",
             "emissions_tco2e": stat_fuel,
-            "availability_status": "AVAILABLE",
-            "availability_reason": f"Reported in SEEG Coleção 14.0 GWP-AR5 ({reference_year}).",
+            "availability_status": stat_fuel_status,
+            "availability_reason": stat_fuel_reason,
             "data_origin": "PROXY",
             "verification_status": "DOCUMENTED",
             "data_source": f"SEEG Municípios Coleção 14.0 — Energia (non-transport)",
@@ -212,8 +263,8 @@ def build_sectors_from_subsector_totals(
             "subsector_key": "on_road_transportation",
             "subsector_name": "On-Road Transportation (Urban Fleet, Freight & Public Transit)",
             "emissions_tco2e": on_road,
-            "availability_status": "AVAILABLE",
-            "availability_reason": f"Reported in SEEG Coleção 14.0 GWP-AR5 ({reference_year}).",
+            "availability_status": on_road_status,
+            "availability_reason": on_road_reason,
             "data_origin": "PROXY",
             "verification_status": "DOCUMENTED",
             "data_source": "SEEG Municípios Coleção 14.0 — Energia / Transportes / Rodoviário",
@@ -236,8 +287,8 @@ def build_sectors_from_subsector_totals(
             "subsector_key": "off_road_and_aviation",
             "subsector_name": "Aviation, Rail & Off-Road Transportation",
             "emissions_tco2e": off_road,
-            "availability_status": "AVAILABLE",
-            "availability_reason": f"Reported in SEEG Coleção 14.0 GWP-AR5 ({reference_year}).",
+            "availability_status": off_road_status,
+            "availability_reason": off_road_reason,
             "data_origin": "PROXY",
             "verification_status": "DOCUMENTED",
             "data_source": "SEEG Municípios Coleção 14.0 — Energia / Transportes (Aéreo, Ferroviário)",
@@ -263,8 +314,8 @@ def build_sectors_from_subsector_totals(
             "subsector_key": "solid_waste_disposal",
             "subsector_name": "Municipal Solid Waste Disposal & Incineration",
             "emissions_tco2e": solid_waste,
-            "availability_status": "AVAILABLE",
-            "availability_reason": f"Reported in SEEG Coleção 14.0 GWP-AR5 ({reference_year}).",
+            "availability_status": solid_waste_status,
+            "availability_reason": solid_waste_reason,
             "data_origin": "PROXY",
             "verification_status": "DOCUMENTED",
             "data_source": "SEEG Municípios Coleção 14.0 — Resíduos (Disposição final, Incineração)",
@@ -287,8 +338,8 @@ def build_sectors_from_subsector_totals(
             "subsector_key": "wastewater_treatment",
             "subsector_name": "Domestic & Industrial Wastewater Treatment",
             "emissions_tco2e": wastewater,
-            "availability_status": "AVAILABLE",
-            "availability_reason": f"Reported in SEEG Coleção 14.0 GWP-AR5 ({reference_year}).",
+            "availability_status": wastewater_status,
+            "availability_reason": wastewater_reason,
             "data_origin": "PROXY",
             "verification_status": "DOCUMENTED",
             "data_source": "SEEG Municípios Coleção 14.0 — Resíduos (Efluentes)",
@@ -314,10 +365,8 @@ def build_sectors_from_subsector_totals(
             "subsector_key": "industrial_processes",
             "subsector_name": "Industrial Processes & Product Use (IPPU)",
             "emissions_tco2e": ippu_val,
-            "availability_status": "AVAILABLE",
-            "availability_reason": (
-                f"Reported in SEEG Coleção 14.0 GWP-AR5 ({reference_year}) as {ippu_val:.2f} tCO2e."
-            ),
+            "availability_status": ippu_status,
+            "availability_reason": ippu_reason,
             "data_origin": "PROXY",
             "verification_status": "DOCUMENTED",
             "data_source": "SEEG Municípios Coleção 14.0 — Processos Industriais",
@@ -343,8 +392,8 @@ def build_sectors_from_subsector_totals(
             "subsector_key": "agriculture_and_livestock",
             "subsector_name": "Agriculture, Livestock & Managed Soils",
             "emissions_tco2e": agro_val,
-            "availability_status": "AVAILABLE",
-            "availability_reason": f"Reported in SEEG Coleção 14.0 GWP-AR5 ({reference_year}).",
+            "availability_status": agro_status,
+            "availability_reason": agro_reason,
             "data_origin": "MODELED",
             "verification_status": "DOCUMENTED",
             "data_source": "SEEG Municípios Coleção 14.0 — Agropecuária (IBGE PPM/PAM)",
@@ -367,8 +416,8 @@ def build_sectors_from_subsector_totals(
             "subsector_key": "land_use_and_forestry",
             "subsector_name": "Land-Use Change & Forestry (Net Emissions/Removals)",
             "emissions_tco2e": lulucf_val,
-            "availability_status": "AVAILABLE",
-            "availability_reason": f"Reported in SEEG Coleção 14.0 GWP-AR5 ({reference_year}).",
+            "availability_status": lulucf_status,
+            "availability_reason": lulucf_reason,
             "data_origin": "MODELED",
             "verification_status": "DOCUMENTED",
             "data_source": "SEEG Municípios Coleção 14.0 — Mudança de Uso da Terra e Floresta (MapBiomas)",
@@ -568,11 +617,11 @@ def build_city_record(
     ibge_code: str,
     city_name: str,
     state: str,
-    population: int,
+    population: Optional[int],
     population_year: int,
     area_km2: Optional[float],
     biome: Optional[str],
-    sub_totals: Dict[str, float],
+    sub_totals: Dict[str, Optional[float]],
     ab_entry: Optional[Dict[str, Any]],
     reference_year: int = DEFAULT_REFERENCE_YEAR,
     last_updated: str = DEFAULT_GENERATED_AT,
@@ -590,7 +639,7 @@ def build_city_record(
     total_emissions = _round2(sum(avail_sector_vals)) if avail_sector_vals else None
     per_capita = (
         _round4(total_emissions / population)
-        if total_emissions is not None and population > 0
+        if total_emissions is not None and population is not None and population > 0
         else None
     )
 
@@ -644,7 +693,7 @@ def build_city_record(
         "ibge_code": ibge_code,
         "name": city_name,
         "state": state,
-        "population": int(population),
+        "population": int(population) if population is not None else None,
         "population_year": int(population_year),
     }
     if area_km2 is not None and area_km2 > 0:
@@ -684,6 +733,24 @@ def build_city_record(
     return record
 
 
+def parse_seeg_year_column(series: pd.Series, year_col: str) -> pd.Series:
+    """
+    Parse SEEG emissions values without coercing missing or malformed cells to 0.0.
+    - Genuine numeric values (including 0.0) are preserved.
+    - Empty/NaN cells remain NaN so all-missing subsectors become UNAVAILABLE (null).
+    - Non-empty, non-numeric cells raise ValueError instead of silently becoming 0.0.
+    """
+    parsed = pd.to_numeric(series, errors="coerce")
+    non_empty = series.notna() & (series.astype(str).str.strip() != "")
+    malformed = non_empty & parsed.isna()
+    if malformed.any():
+        samples = series[malformed].astype(str).head(5).tolist()
+        raise ValueError(
+            f"Malformed non-numeric values in SEEG column '{year_col}': {samples}"
+        )
+    return parsed
+
+
 def build_all_cities(
     seeg_csv: Path = DEFAULT_SEEG_CSV,
     adaptabrasil_json: Path = DEFAULT_ADAPTABRASIL_JSON,
@@ -708,7 +775,7 @@ def build_all_cities(
     df = df[df["Gás"] == "CO2e (t) GWP-AR5"].copy()
     df["ibge_str"] = df["IBGE"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
     df = df[df["ibge_str"].str.match(r"^41\d{5}$") & (df["ibge_str"] != "4100000")].copy()
-    df[year_col] = pd.to_numeric(df[year_col], errors="coerce").fillna(0.0)
+    df[year_col] = parse_seeg_year_column(df[year_col], year_col)
 
     df["gpc_subsector"] = [
         classify_seeg_row(s, c, sc)[1]
@@ -719,7 +786,7 @@ def build_all_cities(
         )
     ]
 
-    grouped = df.groupby(["ibge_str", "gpc_subsector"])[year_col].sum()
+    grouped = df.groupby(["ibge_str", "gpc_subsector"])[year_col].sum(min_count=1)
     city_biomes = (
         df.dropna(subset=["Bioma"])
         .groupby("ibge_str")["Bioma"]
@@ -746,15 +813,18 @@ def build_all_cities(
     for ibge_code in all_ibge_codes:
         ibge_meta = ibge_data.get(ibge_code, {})
         city_name = ibge_meta.get("name") or seeg_city_names.get(ibge_code, ibge_code)
-        population = int(ibge_meta.get("population") or 1)
+        raw_pop = ibge_meta.get("population")
+        population = int(raw_pop) if raw_pop is not None and int(raw_pop) > 0 else None
         population_year = int(ibge_meta.get("population_year") or 2022)
         area_km2 = ibge_meta.get("area_km2")
         biome = city_biomes.get(ibge_code)
 
-        sub_totals: Dict[str, float] = {}
+        sub_totals: Dict[str, Optional[float]] = {}
         if ibge_code in grouped.index.get_level_values(0):
             city_series = grouped.loc[ibge_code]
-            sub_totals = {k: float(v) for k, v in city_series.items()}
+            sub_totals = {
+                k: float(v) for k, v in city_series.items() if pd.notna(v)
+            }
 
         record = build_city_record(
             ibge_code=ibge_code,

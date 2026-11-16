@@ -159,7 +159,7 @@ export function CitySelectorClient({
     };
 
     for (const m of municipalities) {
-      totalPopulation += m.population;
+      totalPopulation += m.population ?? 0;
       if (m.coverage_status !== "COMPLETE") {
         partialCityCount += 1;
       }
@@ -287,7 +287,7 @@ export function CitySelectorClient({
         case "name":
           return mult * a.name.localeCompare(b.name, "pt-BR");
         case "population":
-          return mult * (a.population - b.population);
+          return mult * ((a.population ?? -1) - (b.population ?? -1));
         case "emissions": {
           if (a.total_tco2e === null && b.total_tco2e === null) return 0;
           if (a.total_tco2e === null) return 1;
@@ -663,7 +663,11 @@ export function CitySelectorClient({
               {maringa.name}, {maringa.state}
             </h3>
             <p className="mt-1 text-xs text-[#57534e]">
-              Pop. {formatNumber(maringa.population)} ·{" "}
+              Pop.{" "}
+              {maringa.population !== null
+                ? formatNumber(maringa.population)
+                : "Unavailable"}{" "}
+              ·{" "}
               <span className="font-mono text-[#171717]">
                 {maringa.total_tco2e !== null
                   ? `${formatNumber(maringa.total_tco2e, 0)} tCO₂e`
@@ -696,7 +700,10 @@ export function CitySelectorClient({
                   ? `${formatNumber(statewide.topEmitter.total_tco2e, 0)} tCO₂e`
                   : "N/A"}
               </span>{" "}
-              · Pop. {formatNumber(statewide.topEmitter.population)}
+              · Pop.{" "}
+              {statewide.topEmitter.population !== null
+                ? formatNumber(statewide.topEmitter.population)
+                : "Unavailable"}
             </p>
             <Link
               href={`/city/${statewide.topEmitter.ibge_code}`}
@@ -723,7 +730,10 @@ export function CitySelectorClient({
                   ? `${formatNumber(statewide.topPerCapita.per_capita_tco2e, 2)} tCO₂e/hab`
                   : "N/A"}
               </span>{" "}
-              · Pop. {formatNumber(statewide.topPerCapita.population)}
+              · Pop.{" "}
+              {statewide.topPerCapita.population !== null
+                ? formatNumber(statewide.topPerCapita.population)
+                : "Unavailable"}
             </p>
             <Link
               href={`/city/${statewide.topPerCapita.ibge_code}`}
@@ -931,7 +941,9 @@ export function CitySelectorClient({
                         </div>
                       </td>
                       <td className="px-4 py-3 text-right font-mono text-xs tabular-nums text-[#57534e]">
-                        {formatNumber(city.population)}
+                        {city.population !== null
+                          ? formatNumber(city.population)
+                          : "—"}
                       </td>
                       <td className="px-4 py-3 text-right font-mono font-semibold tabular-nums text-[#171717]">
                         {city.total_tco2e !== null ? (

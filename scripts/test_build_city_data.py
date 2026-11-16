@@ -6,7 +6,9 @@ Compatible with both `pytest` and `python3 -m unittest`.
 from __future__ import annotations
 
 import json
+import math
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -22,9 +24,12 @@ from data.schema.city_schema import (  # noqa: E402
     validate_city_climate_record,
 )
 from scripts.build_city_data import (  # noqa: E402
+    build_all_cities,
+    build_city_record,
     build_sectors_from_subsector_totals,
     classify_seeg_row,
     map_adaptabrasil_risks,
+    parse_seeg_year_column,
 )
 
 
@@ -255,6 +260,146 @@ class TestBuildCityData(unittest.TestCase):
             0.66,
             places=2,
         )
+
+    def test_absent_subsectors_are_unavailable_not_zero(self) -> None:
+        sectors = build_sectors_from_subsector_totals(
+            sub_totals={
+                "stationary_fuel_combustion": 100.0,
+                "industrial_processes": 0.0,
+            },
+            reference_year=2025,
+            city_name="Município Teste",
+            ibge_code="4199999",
+        )
+        # Absent subsectors must be None + UNAVAILABLE, never coerced to 0.0
+        on_road = next(
+            s
+            for s in sectors["TRANSPORTATION"]["subsectors"]
+            if s["subsector_key"] == "on_road_transportation"
+        )
+        self.assertIsNone(on_road["emissions_tco2e"])
+        self.assertEqual(on_road["availability_status"], "UNAVAILABLE")
+        self.assertEqual(sectors["TRANSPORTATION"]["coverage_status"], "UNAVAILABLE")
+        self.assertIsNone(sectors["TRANSPORTATION"]["emissions_tco2e"])
+
+        # Genuine 0.0 remains AVAILABLE
+        ippu = sectors["IPPU"]["subsectors"][0]
+        self.assertEqual(ippu["emissions_tco2e"], 0.0)
+        self.assertEqual(ippu["availability_status"], "AVAILABLE")
+
+    def test_parse_seeg_year_column_distinguishes_zero_missing_and_malformed(
+        self,
+    ) -> None:
+        parsed = parse_seeg_year_column(pd.Series(["0.0", "12.5", "", None]), "2025")
+        self.assertEqual(parsed.iloc[0], 0.0)
+        self.assertEqual(parsed.iloc[1], 12.5)
+        self.assertTrue(math.isnan(parsed.iloc[2]))
+        self.assertTrue(math.isnan(parsed.iloc[3]))
+
+        with self.assertRaises(ValueError):
+            parse_seeg_year_column(pd.Series(["10.0", "N/A"]), "2025")
+
+    def test_missing_population_produces_null_instead_of_one(self) -> None:
+        record = build_city_record(
+            ibge_code="4199999",
+            city_name="Município Teste",
+            state="PR",
+            population=None,
+            population_year=2022,
+            area_km2=None,
+            biome="Mata Atlântica",
+            sub_totals={"stationary_fuel_combustion": 100.0},
+            ab_entry=None,
+            reference_year=2025,
+        )
+        self.assertIsNone(record["metadata"]["population"])
+        self.assertIsNone(record["emissions_summary"]["per_capita_tco2e"])
+        self.assertEqual(validate_city_climate_record(record), [])
+
+    def test_build_all_cities_synthetic_fixture(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            seeg_csv = tmp / "seeg.csv"
+            ab_json = tmp / "ab.json"
+            ibge_json = tmp / "ibge.json"
+            out_dir = tmp / "out"
+
+            pd.DataFrame(
+                [
+                    {
+                        "Setor de emissão": "Energia",
+                        "Categoria emissora": "Residencial",
+                        "Sub-categoria emissora": "Residencial",
+                        "Bioma": "Mata Atlântica",
+                        "Gás": "CO2e (t) GWP-AR5",
+                        "Cidade": "Cidade Teste (PR)",
+                        "IBGE": 4199998,
+                        "2025": 42.5,
+                    },
+                    {
+                        "Setor de emissão": "Processos Industriais",
+                        "Categoria emissora": "Uso de HFCs",
+                        "Sub-categoria emissora": "Refrigeração",
+                        "Bioma": "Mata Atlântica",
+                        "Gás": "CO2e (t) GWP-AR5",
+                        "Cidade": "Cidade Teste (PR)",
+                        "IBGE": 4199998,
+                        "2025": 0.0,
+                    },
+                    {
+                        "Setor de emissão": "Resíduos",
+                        "Categoria emissora": "Disposição final",
+                        "Sub-categoria emissora": "Aterro",
+                        "Bioma": "Mata Atlântica",
+                        "Gás": "CO2e (t) GWP-AR5",
+                        "Cidade": "Cidade Teste (PR)",
+                        "IBGE": 4199998,
+                        "2025": None,
+                    },
+                ]
+            ).to_csv(seeg_csv, index=False)
+
+            ab_json.write_text(json.dumps({"municipalities": {}}), encoding="utf-8")
+            ibge_json.write_text(
+                json.dumps(
+                    {
+                        "municipalities": {
+                            "4199998": {
+                                "name": "Cidade Teste",
+                                "population": None,
+                                "population_year": 2022,
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            build_all_cities(
+                seeg_csv=seeg_csv,
+                adaptabrasil_json=ab_json,
+                ibge_json=ibge_json,
+                out_dir=out_dir,
+                reference_year=2025,
+            )
+
+            city_record = json.loads(
+                (out_dir / "4199998.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(validate_city_climate_record(city_record), [])
+            self.assertIsNone(city_record["metadata"]["population"])
+            self.assertIsNone(city_record["emissions_summary"]["per_capita_tco2e"])
+            self.assertEqual(
+                city_record["sectors"]["IPPU"]["subsectors"][0]["emissions_tco2e"], 0.0
+            )
+            self.assertEqual(
+                city_record["sectors"]["IPPU"]["subsectors"][0]["availability_status"],
+                "AVAILABLE",
+            )
+            self.assertIsNone(city_record["sectors"]["WASTE"]["emissions_tco2e"])
+            self.assertEqual(
+                city_record["sectors"]["WASTE"]["coverage_status"], "UNAVAILABLE"
+            )
 
 
 if __name__ == "__main__":
